@@ -7,7 +7,7 @@
 >
 > 在 DSH 内置的插件中枢里完成插件的发现、信任评估、安全安装、更新、启停与审计——Windows 一等公民。
 
-**Status / 状态**: under active development (M1). Docs: [中文说明](README.zh.md).
+**Status/状态**: v0.1.0 — first release. Docs: [中文说明](README.zh.md).
 
 ## What it is / 它是什么
 
