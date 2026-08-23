@@ -1,3 +1,4 @@
+import { IncomingMessage, ServerResponse } from "node:http";
 //#region src/shared/types.d.ts
 /** Stable error codes for every failure surface of the plugin center. */
 declare const CpErrorCode: {
@@ -49,34 +50,49 @@ interface AuditEvent {
   detail?: Record<string, string | number | boolean>;
 }
 //#endregion
-//#region src/shared/ssrc-guard.d.ts
-/**
- * Decide whether a host (already lower-cased, brackets stripped) is safe for
- * outbound requests. Rejects loopback, private, link-local, CGNAT, multicast,
- * reserved and IPv4-mapped IPv6 forms.
- */
-declare function isHostAllowed(hostname: string): boolean;
-/** Validate an outbound URL; returns the parsed URL or a closed error. */
-declare function assertSafeUrl(raw: string | URL): CpResult<URL>;
-interface SafeFetchOptions {
-  timeoutMs?: number;
-  maxRedirects?: number;
-  headers?: Record<string, string>;
+//#region src/host/ports.d.ts
+interface CommandSpec {
+  cmd: string;
+  args: string[];
+}
+interface CommandOutcome {
+  code: number;
+  stdout: string;
+  stderr: string;
+}
+/** Ports the engine depends on; every one is fake-able in tests. */
+interface EnginePorts {
+  fs: FileSystemPort;
+  commands: CommandPort;
+  clock: ClockPort;
+  http: HttpPort;
+}
+interface FileSystemPort {
+  readFile(path: string): string | null;
+  writeFileAtomic(path: string, contents: string): void;
+  copyFile(from: string, to: string): void;
+  mkdirDeep(path: string): void;
+  hashFile(path: string): string | null;
+  fileExists(path: string): boolean;
+  /** Delete a path; symlink/junction links are unlinked, never followed. */
+  removePath(path: string): void;
+}
+interface CommandPort {
+  run(spec: CommandSpec): Promise<CommandOutcome>;
+}
+interface ClockPort {
+  now(): Date;
+}
+interface HttpPort {
+  fetchText(url: string, timeoutMs?: number): Promise<CpResult<string>>;
 }
 /**
- * fetch wrapper that re-validates every hop (redirects are followed manually)
- * so a redirect cannot smuggle us onto a private address.
+ * Containment check that survives Windows cross-drive paths: a cross-drive
+ * `path.relative` degenerates into an absolute path, so an absolute result can
+ * never count as "inside".
  */
-declare function safeFetch(rawUrl: string | URL, options?: SafeFetchOptions): Promise<CpResult<{
-  status: number;
-  text: string;
-}>>;
-//#endregion
-//#region src/shared/redact.d.ts
-declare function isSensitiveValue(value: string): boolean;
-declare function redactValue(key: string, value: string): string;
-/** Shallow record redaction used by the audit trail before anything hits disk. */
-declare function redactRecord(record: Record<string, unknown>): Record<string, unknown>;
+declare function isInsideRoot(root: string, target: string): boolean;
+declare function nodePorts(): EnginePorts;
 //#endregion
 //#region src/shared/catalog.d.ts
 type EvidenceLevel = 'discovered' | 'installable' | 'verified' | 'recommended';
@@ -139,50 +155,6 @@ interface SearchQuery {
   evidenceOnlyRecommended?: boolean;
 }
 declare function searchEntries(entries: CatalogEntry[], query: SearchQuery): CatalogEntry[];
-//#endregion
-//#region src/host/ports.d.ts
-interface CommandSpec {
-  cmd: string;
-  args: string[];
-}
-interface CommandOutcome {
-  code: number;
-  stdout: string;
-  stderr: string;
-}
-/** Ports the engine depends on; every one is fake-able in tests. */
-interface EnginePorts {
-  fs: FileSystemPort;
-  commands: CommandPort;
-  clock: ClockPort;
-  http: HttpPort;
-}
-interface FileSystemPort {
-  readFile(path: string): string | null;
-  writeFileAtomic(path: string, contents: string): void;
-  copyFile(from: string, to: string): void;
-  mkdirDeep(path: string): void;
-  hashFile(path: string): string | null;
-  fileExists(path: string): boolean;
-  /** Delete a path; symlink/junction links are unlinked, never followed. */
-  removePath(path: string): void;
-}
-interface CommandPort {
-  run(spec: CommandSpec): Promise<CommandOutcome>;
-}
-interface ClockPort {
-  now(): Date;
-}
-interface HttpPort {
-  fetchText(url: string, timeoutMs?: number): Promise<CpResult<string>>;
-}
-/**
- * Containment check that survives Windows cross-drive paths: a cross-drive
- * `path.relative` degenerates into an absolute path, so an absolute result can
- * never count as "inside".
- */
-declare function isInsideRoot(root: string, target: string): boolean;
-declare function nodePorts(): EnginePorts;
 //#endregion
 //#region src/host/plans.d.ts
 type PlanAction = 'install' | 'uninstall' | 'update';
@@ -276,11 +248,11 @@ declare class LifecycleEngine {
   /** One-shot confirmation bound to the deterministic phrase. */
   confirmPlan(planId: string, phrase: string): CpResult<InstallPlan>;
   /**
-   * Pre-hash the profile, back it up, run the pinned official CLI, compare
-   * post-state, probe health, audit everything — byte-exact rollback on any
-   * failure after the backup succeeded.
+   * Apply a confirmed plan: pre-hash the profile, back it up, run the pinned
+   * official CLI, compare post-state, probe health, audit everything — with
+   * byte-exact rollback on any failure after the backup succeeded.
    */
-  execute(planId: string): Promise<CpResult<{
+  applyPlan(planId: string): Promise<CpResult<{
     state: PlanState;
   }>>;
   private commandFor;
@@ -314,5 +286,221 @@ interface EnginePortsLike {
   http: HttpPort;
 }
 //#endregion
-export { type AuditEvent, type AuditOutcome, type CandidateEntry, type CatalogEntry, type CatalogLoadInput, type CompatLevel, CpError, CpErrorCode, type CpResult, type EngineDeps, type EnginePorts, type EvidenceLevel, type InstallPlan, type LifecycleConfig, LifecycleEngine, type LoadedCatalog, PROFILE_FILES, type PlanAction, type PlanState, PlanStore, assertSafeUrl, buildInstallCmd, buildNpmAddCmd, buildRemoveCmd, confirmationPhrase, cpErr, cpOk, createPlan, detectLifecycleScripts, isHostAllowed, isInsideRoot, isSensitiveValue, isValidCommit, loadCatalog, nodePorts, normalizePluginId, paginate, redactRecord, redactValue, safeFetch, searchEntries, sortEntries, toCpResult, validateCatalogEntry };
+//#region src/host/services.d.ts
+declare const PLUGIN_NAME = "zdsh-plugin-center";
+interface PluginCenterConfig {
+  defaultProfile: string;
+  /** Explicit profile directory override; resolved from dshHome when absent. */
+  profileDir?: string;
+  /** DSH storage home; resolution order: config → env → zDSH dir → upstream dir. */
+  dshHome?: string;
+  /** Data root for backups/audit/cache; defaults to ~/.zdsh-plugin-center. */
+  dataRoot?: string;
+  remoteCatalogUrl?: string | null;
+  /** Seed catalog override (tests / custom distributions). */
+  catalogSeedPath?: string;
+  mutationsEnabled: boolean;
+}
+declare function resolveDataRoot(config?: PluginCenterConfig): string;
+/** Profile directory layout follows the host convention `$DSH_HOME/profiles/<name>`. */
+declare function resolveProfileDir(config: PluginCenterConfig): string;
+declare function normalizeConfig(raw?: Record<string, unknown>): PluginCenterConfig;
+/** Locate the catalog seed shipped inside this package (src or built lib). */
+declare function bundledSeedPath(): string;
+/** Per-boot runtime identity so clients can detect host reloads. */
+interface RuntimeIdentity {
+  schemaVersion: 1;
+  pluginName: string;
+  bootId: string;
+  startedAt: string;
+  restartMode: 'self-guardian';
+}
+declare function createRuntimeIdentity(): RuntimeIdentity;
+interface MarketPage extends Page<CatalogEntry> {
+  mode: LoadedCatalog['mode'];
+  fetchedAt?: string;
+}
+declare class PluginCenterServices {
+  private readonly ports;
+  private readonly catalogTtlMs;
+  readonly config: PluginCenterConfig;
+  readonly engine: LifecycleEngine;
+  private readonly identity;
+  private catalogCache;
+  constructor(configRaw: Record<string, unknown>, ports?: EnginePorts, catalogTtlMs?: number, depsOverride?: Partial<EngineDeps>);
+  /** Stage a plan for a catalog entry; returns the plan id and its phrase. */
+  stagePlan(action: PlanAction, entryId: string): Promise<CpResult<{
+    planId: string;
+    phrase: string;
+  }>>;
+  /** Confirm with the exact phrase, then carry the plan through. */
+  confirmAndRun(planId: string, phrase: string): Promise<CpResult<{
+    state: PlanState;
+  }>>;
+  get runtime(): RuntimeIdentity;
+  get profileDir(): string;
+  catalog(forceRefresh?: boolean): Promise<CpResult<LoadedCatalog>>;
+  /** Bounded, sorted, filtered market page. */
+  marketPage(params: {
+    page?: number;
+    pageSize?: number;
+    q?: string;
+    category?: string;
+    onlyRecommended?: boolean;
+    forceRefresh?: boolean;
+  }): Promise<CpResult<MarketPage>>;
+  entryById(entryId: string): Promise<CpResult<CatalogEntry>>;
+}
+//#endregion
+//#region src/host/plugin.d.ts
+interface RouteRegistrar {
+  register(route: {
+    kind: string;
+    path: string;
+    handler: (req: IncomingMessage, res: ServerResponse) => void | Promise<void>;
+  }): () => void;
+}
+interface WebContextLike {
+  webServer: RouteRegistrar;
+  effect?(teardown: () => unknown, label?: string): void;
+  logger?: {
+    info?(message: string): void;
+  };
+}
+interface HostContextLike {
+  inject(dependencies: readonly string[], ready: (webCtx: WebContextLike) => void): void;
+  logger?: {
+    info?(message: string): void;
+  };
+}
+declare const name = "zdsh-plugin-center";
+declare const inject: readonly string[];
+/** Adapt one raw node request into a router request and answer it. */
+declare function serveRequest(services: PluginCenterServices, req: IncomingMessage, res: ServerResponse): Promise<void>;
+/** Cordis apply: wire the plugin center onto a running host. */
+declare function apply(ctx: HostContextLike, config?: Record<string, unknown>): void;
+//#endregion
+//#region src/shared/ssrc-guard.d.ts
+/**
+ * Decide whether a host (already lower-cased, brackets stripped) is safe for
+ * outbound requests. Rejects loopback, private, link-local, CGNAT, multicast,
+ * reserved and IPv4-mapped IPv6 forms.
+ */
+declare function isHostAllowed(hostname: string): boolean;
+/** Validate an outbound URL; returns the parsed URL or a closed error. */
+declare function assertSafeUrl(raw: string | URL): CpResult<URL>;
+interface SafeFetchOptions {
+  timeoutMs?: number;
+  maxRedirects?: number;
+  headers?: Record<string, string>;
+}
+/**
+ * fetch wrapper that re-validates every hop (redirects are followed manually)
+ * so a redirect cannot smuggle us onto a private address.
+ */
+declare function safeFetch(rawUrl: string | URL, options?: SafeFetchOptions): Promise<CpResult<{
+  status: number;
+  text: string;
+}>>;
+//#endregion
+//#region src/shared/redact.d.ts
+declare function isSensitiveValue(value: string): boolean;
+declare function redactValue(key: string, value: string): string;
+/** Shallow record redaction used by the audit trail before anything hits disk. */
+declare function redactRecord(record: Record<string, unknown>): Record<string, unknown>;
+//#endregion
+//#region src/host/api.d.ts
+declare const API_PREFIX: string;
+declare const ROUTES: {
+  readonly market: string;
+  readonly entry: string;
+  readonly stagePlan: string;
+  readonly applyPlan: string;
+  readonly audit: string;
+  readonly runtime: string;
+  readonly restartRequest: string;
+};
+declare const INTENT_HEADER = "x-zdsh-pc-intent";
+interface RouterRequest {
+  method: 'GET' | 'POST';
+  path: string;
+  query?: Record<string, string | undefined>;
+  headers?: Record<string, string | undefined>;
+  body?: unknown;
+}
+interface RouterResponse {
+  status: number;
+  payload: unknown;
+}
+/** Handle one API request. Never throws — every outcome is a JSON response. */
+declare function handleApiRequest(services: PluginCenterServices, request: RouterRequest): Promise<RouterResponse>;
+//#endregion
+//#region src/host/guardian.d.ts
+interface GuardianConfig {
+  dataRoot: string;
+  /** TCP port of the DSH web host on 127.0.0.1. */
+  port: number;
+  /** Command that boots the DSH web host again after a crash. */
+  launch: {
+    cmd: string;
+    args: string[];
+  };
+  intervalMs?: number;
+}
+interface GuardianStatus {
+  state: 'probing' | 'restarting' | 'healthy' | 'give-up';
+  bootId: string;
+  startedAtMs: number;
+  checkedAtMs: number;
+  healthyTicks: number;
+  restartsUsed: number;
+}
+declare function guardianDir(dataRoot: string): string;
+declare function statusPath(dataRoot: string): string;
+declare function pidPath(dataRoot: string): string;
+interface PidResult {
+  ok: boolean;
+  pid?: number;
+  reason?: string;
+}
+/** Spawn the detached watchdog; resolves with its pid. Idempotent per pidfile. */
+declare function startGuardian(config: GuardianConfig): Promise<PidResult>;
+/** Stop a running watchdog; safe when none is running. */
+declare function stopGuardian(dataRoot: string): {
+  stopped: boolean;
+};
+//#endregion
+//#region src/host/restart-budget.d.ts
+/**
+ * Bounded-restart accounting shared by the guardian entry and the runtime
+ * surface: at most `max` restarts inside any `windowMs`, then the circuit
+ * stays open (give-up) until an operator intervenes.
+ */
+declare class RestartBudget {
+  private readonly windowMs;
+  private readonly max;
+  private attempts;
+  constructor(windowMs?: number, max?: number);
+  /** Would another restart right now still be within budget? */
+  canRestart(nowMs: number): boolean;
+  record(nowMs: number): void;
+  /** Number of restarts already spent in the current window. */
+  used(nowMs: number): number;
+  reset(): void;
+  private prune;
+}
+type ProbeVerdict = {
+  kind: 'healthy';
+} | {
+  kind: 'unhealthy';
+};
+type GuardianAction = 'none' | 'restart' | 'give-up';
+/** Pure decision step used by the guardian loop on every probe tick. */
+declare function decideAction(input: {
+  verdict: ProbeVerdict;
+  budget: RestartBudget;
+  nowMs: number;
+}): GuardianAction;
+//#endregion
+export { API_PREFIX, type AuditEvent, type AuditOutcome, type CandidateEntry, type CatalogEntry, type CatalogLoadInput, type CompatLevel, CpError, CpErrorCode, type CpResult, type EngineDeps, type EnginePorts, type EvidenceLevel, type GuardianAction, type GuardianConfig, type GuardianStatus, INTENT_HEADER, type InstallPlan, type LifecycleConfig, LifecycleEngine, type LoadedCatalog, PLUGIN_NAME, PROFILE_FILES, type PlanAction, type PlanState, PlanStore, type PluginCenterConfig, PluginCenterServices, type ProbeVerdict, ROUTES, RestartBudget, type RouterRequest, type RouterResponse, type RuntimeIdentity, apply, apply as cordisApply, apply as default, assertSafeUrl, buildInstallCmd, buildNpmAddCmd, buildRemoveCmd, bundledSeedPath, confirmationPhrase, name as cordisName, name, cpErr, cpOk, createPlan, createRuntimeIdentity, decideAction, detectLifecycleScripts, guardianDir, handleApiRequest, inject, isHostAllowed, isInsideRoot, isSensitiveValue, isValidCommit, loadCatalog, nodePorts, normalizeConfig, normalizePluginId, paginate, pidPath, redactRecord, redactValue, resolveDataRoot, resolveProfileDir, safeFetch, searchEntries, serveRequest, sortEntries, startGuardian, statusPath, stopGuardian, toCpResult, validateCatalogEntry };
 //# sourceMappingURL=index.d.mts.map

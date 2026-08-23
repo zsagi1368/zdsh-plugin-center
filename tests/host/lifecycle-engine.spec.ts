@@ -114,7 +114,7 @@ describe('lifecycle engine happy path', () => {
     const confirmed = h.engine.confirmPlan(built.data.plan.planId, built.data.phrase);
     expect(confirmed.ok).toBe(true);
 
-    const executed = await h.engine.execute(built.data.plan.planId);
+    const executed = await h.engine.applyPlan(built.data.plan.planId);
     expect(executed).toMatchObject({ ok: true });
     if (executed.ok) expect(executed.data.state).toBe('restart-pending');
 
@@ -145,7 +145,7 @@ describe('lifecycle engine happy path', () => {
     const h = makeHarness();
     const built = h.engine.buildPlan(ghEntry(), 'install', h.profileDir);
     if (!built.ok) throw new Error('build failed');
-    const executed = await h.engine.execute(built.data.plan.planId);
+    const executed = await h.engine.applyPlan(built.data.plan.planId);
     expect(executed.ok).toBe(false);
     if (!executed.ok) expect(executed.error.code).toBe('invalid_plan');
   });
@@ -160,7 +160,7 @@ describe('rollback semantics', () => {
     const built = h.engine.buildPlan(ghEntry(), 'install', h.profileDir);
     if (!built.ok) throw new Error('build failed');
     h.engine.confirmPlan(built.data.plan.planId, built.data.phrase);
-    const executed = await h.engine.execute(built.data.plan.planId);
+    const executed = await h.engine.applyPlan(built.data.plan.planId);
 
     expect(executed.ok).toBe(false);
     if (!executed.ok) expect(executed.error.code).toBe('install_failed');
@@ -177,7 +177,7 @@ describe('rollback semantics', () => {
     const built = h.engine.buildPlan(ghEntry(), 'install', h.profileDir);
     if (!built.ok) throw new Error('build failed');
     h.engine.confirmPlan(built.data.plan.planId, built.data.phrase);
-    const executed = await h.engine.execute(built.data.plan.planId);
+    const executed = await h.engine.applyPlan(built.data.plan.planId);
 
     expect(executed.ok).toBe(false);
     if (!executed.ok) expect(executed.error.code).toBe('health_check_failed');
@@ -189,7 +189,7 @@ describe('rollback semantics', () => {
     const built = h.engine.buildPlan(ghEntry(), 'install', h.profileDir);
     if (!built.ok) throw new Error('build failed');
     h.engine.confirmPlan(built.data.plan.planId, built.data.phrase);
-    await h.engine.execute(built.data.plan.planId);
+    await h.engine.applyPlan(built.data.plan.planId);
     const { readdirSync } = await import('node:fs');
     const backups = readdirSync(join(h.dataRoot, 'backups'));
     expect(backups.length).toBeGreaterThanOrEqual(1);
@@ -220,7 +220,7 @@ describe('script gating and uninstall', () => {
     const built = h.engine.buildPlan(ghEntry(), 'uninstall', h.profileDir);
     if (!built.ok) throw new Error('build failed');
     h.engine.confirmPlan(built.data.plan.planId, built.data.phrase);
-    const executed = await h.engine.execute(built.data.plan.planId);
+    const executed = await h.engine.applyPlan(built.data.plan.planId);
     expect(executed.ok).toBe(true);
     expect((h.commands[0] as CommandSpec).args).toEqual([
       'plugin',

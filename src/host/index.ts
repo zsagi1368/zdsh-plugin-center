@@ -1,11 +1,15 @@
 /**
- * zdsh-plugin-center — host-side public surface.
+ * zdsh-plugin-center — host-side public surface and Cordis entry.
  *
- * v1 (standalone plugin) exports the engine building blocks; the Cordis
- * plugin shell and HTTP routes are layered on top of these in the same
- * package (see ./server.js). Everything returned to callers uses the closed
- * CpResult envelope.
+ * v1 ships as a standalone plugin: the default export is the Cordis plugin
+ * (name/inject/apply). Domain building blocks are re-exported for reuse and
+ * for the future branch-integrated form.
  */
+import { apply, inject, name } from './plugin.js';
+
+export default apply;
+export { apply, inject, name };
+
 export {
   CpErrorCode,
   cpOk,
@@ -50,3 +54,38 @@ export {
   type PlanAction,
 } from './plans.js';
 export { loadCatalog, type LoadedCatalog, type CatalogLoadInput } from './snapshot.js';
+export {
+  PluginCenterServices,
+  normalizeConfig,
+  resolveDataRoot,
+  resolveProfileDir,
+  bundledSeedPath,
+  createRuntimeIdentity,
+  PLUGIN_NAME,
+  type PluginCenterConfig,
+  type RuntimeIdentity,
+} from './services.js';
+export {
+  handleApiRequest,
+  ROUTES,
+  API_PREFIX,
+  INTENT_HEADER,
+  type RouterRequest,
+  type RouterResponse,
+} from './api.js';
+export { serveRequest, apply as cordisApply, name as cordisName } from './plugin.js';
+export {
+  startGuardian,
+  stopGuardian,
+  statusPath,
+  pidPath,
+  guardianDir,
+  type GuardianConfig,
+  type GuardianStatus,
+} from './guardian.js';
+export {
+  RestartBudget,
+  decideAction,
+  type GuardianAction,
+  type ProbeVerdict,
+} from './restart-budget.js';

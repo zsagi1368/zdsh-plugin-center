@@ -161,11 +161,11 @@ export class LifecycleEngine {
   }
 
   /**
-   * Pre-hash the profile, back it up, run the pinned official CLI, compare
-   * post-state, probe health, audit everything — byte-exact rollback on any
-   * failure after the backup succeeded.
+   * Apply a confirmed plan: pre-hash the profile, back it up, run the pinned
+   * official CLI, compare post-state, probe health, audit everything — with
+   * byte-exact rollback on any failure after the backup succeeded.
    */
-  async execute(planId: string): Promise<CpResult<{ state: PlanState }>> {
+  async applyPlan(planId: string): Promise<CpResult<{ state: PlanState }>> {
     const record = this.plans.get(planId);
     if (!record || record.state !== 'confirmed') {
       return cpErr('invalid_plan', `plan ${planId} is not in confirmed state`);
