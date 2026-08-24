@@ -1,6 +1,6 @@
 {
   "name": "zdsh-plugin-center",
-  "version": "0.1.0",
+  "version": "0.2.0",
   "description": "zDSH Plugin Center - discover, trust, install, update and audit DSH plugins from one built-in hub (clean-room independent plugin)",
   "type": "module",
   "main": "lib/index.js",
