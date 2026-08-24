@@ -186,6 +186,9 @@ export class LifecycleEngine {
       return cpErr('invalid_plan', `plan ${planId} is not in confirmed state`);
     }
     const plan = record.plan;
+    // Enter executing inside the store immediately: a second apply of the
+    // same id (queued or replayed) must be refused, not re-run.
+    this.plans.markState(planId, 'executing');
     this.states.set(planId, 'executing');
     let backup: BackupRecord | null = null;
     try {
@@ -268,6 +271,7 @@ export class LifecycleEngine {
       });
 
       this.states.set(planId, 'restart-pending');
+      this.plans.markState(planId, 'restart-pending');
       this.audit({
         ts: this.now(),
         action: 'plan.done',
@@ -279,7 +283,9 @@ export class LifecycleEngine {
     } catch (error) {
       const code = error instanceof CpError ? error.code : CpErrorCode.internal;
       const rolledBack = backup ? this.rollbackFromBackup(backup) : true;
-      this.states.set(planId, rolledBack ? 'rolled-back' : 'executing');
+      const finalState: PlanState = rolledBack ? 'rolled-back' : 'executing';
+      this.states.set(planId, finalState);
+      this.plans.markState(planId, finalState);
       this.audit({
         ts: this.now(),
         action: 'plan.failed',

@@ -5,7 +5,7 @@
  * so the whole API is testable without a socket. `attachRoutes` adapts it to
  * the DSH host webserver's plugin route registration contract at runtime.
  */
-import { readFile } from 'node:fs/promises';
+import { open, stat } from 'node:fs/promises';
 import { join } from 'node:path';
 import type { PluginCenterServices } from './services.js';
 import { PLUGIN_NAME, resolveDataRoot } from './services.js';
@@ -23,6 +23,7 @@ export const ROUTES = {
   guardianToggle: [API_PREFIX, 'guardian/toggle'].join('/'),
   backups: [API_PREFIX, 'backups'].join('/'),
   backupRestore: [API_PREFIX, 'backups/restore'].join('/'),
+  backupRestoreApply: [API_PREFIX, 'backups/restore/apply'].join('/'),
   restartRequest: [API_PREFIX, 'restart/request'].join('/'),
 } as const;
 
@@ -31,6 +32,7 @@ const WRITE_PATHS: ReadonlySet<string> = new Set([
   ROUTES.applyPlan,
   ROUTES.guardianToggle,
   ROUTES.backupRestore,
+  ROUTES.backupRestoreApply,
   ROUTES.restartRequest,
 ]);
 
@@ -72,9 +74,12 @@ function statusFor(code: string): number {
   switch (code) {
     case 'invalid_plan':
     case 'confirmation_mismatch':
+    case 'unsafe_url':
       return 400;
-    case 'plan_consumed':
     case 'plan_not_found':
+      return 404;
+    case 'plan_consumed':
+    case 'hash_mismatch':
       return 409;
     case 'script_blocked':
     case 'untrusted_source':
@@ -87,9 +92,19 @@ function statusFor(code: string): number {
   }
 }
 
-function sameOriginOk(headers: Record<string, string | undefined>): boolean {
+const LOOPBACK_HOSTNAMES: ReadonlySet<string> = new Set(['127.0.0.1', '::1', '[::1]']);
+
+/**
+ * The API is local-first: the Host header must name a loopback literal.
+ * This closes the DNS-rebinding hole where an attacker page and this server
+ * would otherwise agree on a rebindable hostname for both Origin and Host.
+ */
+function hostGateOk(headers: Record<string, string | undefined>): boolean {
   const host = headers.host;
   if (!host) return false;
+  const hostname = host.startsWith('[') ? host.slice(0, host.indexOf(']') + 1) : host.split(':')[0] ?? '';
+  const bare = hostname.toLowerCase();
+  if (!LOOPBACK_HOSTNAMES.has(bare)) return false;
   const origin = headers.origin;
   if (!origin) return true; // same-origin GETs may omit Origin
   try {
@@ -111,7 +126,7 @@ export async function handleApiRequest(
   if (!Object.values(ROUTES).includes(request.path)) {
     return json(404, { error: { code: 'not_found', message: 'unknown path' } });
   }
-  if (!sameOriginOk(request.headers ?? {})) {
+  if (!hostGateOk(request.headers ?? {})) {
     return json(403, { error: { code: 'cross_origin_denied', message: 'cross-origin denied' } });
   }
   if (WRITE_PATHS.has(request.path)) {
@@ -135,7 +150,6 @@ export async function handleApiRequest(
         q: q.q,
         category: q.category,
         onlyRecommended: q.onlyRecommended === '1',
-        forceRefresh: q.refresh === '1',
       }),
     );
   }
@@ -161,11 +175,22 @@ export async function handleApiRequest(
     return fromCp(await services.guardianToggle(body.action));
   }
   if (matches(request, 'POST', ROUTES.backupRestore)) {
+    // Two-phase: staging returns a one-shot id/code pair; the apply route
+    // consumes it. Parity with the install plan confirmation flow.
     const body = (request.body ?? {}) as { name?: string };
     if (!body.name) {
       return json(400, { error: { code: 'invalid_plan', message: 'name is required' } });
     }
-    return fromCp(services.restoreBackup(body.name));
+    return fromCp(await services.stageRestore(body.name));
+  }
+  if (matches(request, 'POST', ROUTES.backupRestoreApply)) {
+    const body = (request.body ?? {}) as { restoreId?: string; code?: string };
+    if (!body.restoreId || !body.code) {
+      return json(400, {
+        error: { code: 'invalid_plan', message: 'restoreId and code are required' },
+      });
+    }
+    return fromCp(services.applyRestore(body.restoreId, body.code));
   }
   if (matches(request, 'GET', ROUTES.audit)) {
     return json(200, await readAuditTail(resolveDataRoot(services.config)));
@@ -210,14 +235,30 @@ function toInt(raw: string | undefined): number | undefined {
   return Number.isFinite(n) ? n : undefined;
 }
 
+/** Read at most the trailing 128 KiB of the audit log — never the whole file. */
 async function readAuditTail(dataRoot: string, maxLines = 200): Promise<unknown[]> {
-  let raw: string;
+  const logPath = join(dataRoot, 'audit-log.jsonl');
+  let raw = '';
+  let truncated = false;
   try {
-    raw = await readFile(join(dataRoot, 'audit-log.jsonl'), 'utf8');
+    const stats = await stat(logPath);
+    const start = Math.max(0, stats.size - 128 * 1024);
+    truncated = start > 0;
+    const handle = await open(logPath, 'r');
+    try {
+      const length = Math.min(stats.size - start, 128 * 1024);
+      const buffer = Buffer.alloc(length);
+      await handle.read(buffer, 0, length, start);
+      raw = buffer.toString('utf8');
+    } finally {
+      await handle.close();
+    }
   } catch {
     return [];
   }
+  // Drop a possibly truncated first line when we started mid-file.
   const lines = raw.split('\n').filter((line) => line.trim() !== '');
+  if (truncated && lines.length > 0) lines.shift();
   const parsed: unknown[] = [];
   for (const line of lines.slice(-maxLines)) {
     try {

@@ -37,11 +37,14 @@ describe('plan creation', () => {
     }
   });
 
-  it('produces deterministic phrases: same plan, same phrase', () => {
+  it('codes are random one-shot secrets, not derived content', () => {
     const a = createPlan(ghEntry(), 'install', 'web');
     const b = createPlan(ghEntry(), 'install', 'web');
-    expect(confirmationPhrase(a)).toBe(confirmationPhrase(b));
-    expect(a.phraseSha8).toMatch(/^[0-9a-f]{12}$/);
+    // identical content yields identical plan ids…
+    expect(a.planId).toBe(b.planId);
+    // …but independent confirmation codes, so a leaked id reveals nothing
+    expect(a.confirmCode).toMatch(/^[0-9a-f]{12}$/);
+    expect(a.confirmCode).not.toBe(b.confirmCode);
   });
 
   it('different actions or profiles yield different phrases', () => {

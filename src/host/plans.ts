@@ -1,4 +1,4 @@
-import { createHash } from 'node:crypto';
+import { createHash, randomBytes } from 'node:crypto';
 import type { CatalogEntry } from '../shared/catalog.js';
 import { isValidCommit } from '../shared/catalog.js';
 import { CpErrorCode, type PlanState } from '../shared/types.js';
@@ -10,7 +10,7 @@ export interface InstallPlan {
   action: PlanAction;
   profile: string;
   entry: CatalogEntry;
-  phraseSha8: string;
+  confirmCode: string;
   createdAt: string;
 }
 
@@ -24,7 +24,7 @@ export class CpError extends Error {
   }
 }
 
-function hashPlan(plan: Omit<InstallPlan, 'planId' | 'phraseSha8' | 'createdAt'>): string {
+function hashPlan(plan: Omit<InstallPlan, 'planId' | 'confirmCode' | 'createdAt'>): string {
   const canonical = JSON.stringify({
     action: plan.action,
     profile: plan.profile,
@@ -66,27 +66,27 @@ export function createPlan(
   const core = { action, profile, entry };
   const digest = hashPlan(core);
   return {
+    // plan id derives from content (stable, auditable); the confirmation
+    // code below is deliberately INDEPENDENT randomness so a leaked id —
+    // audit logs include them — can never reveal the code.
     planId: `${digest.slice(0, 16)}-${action}`,
     action,
     profile,
     entry,
-    // 12 hex chars: the confirmation code is typed by a human, so keep it
-    // short while leaving no realistic brute-force window for profile
-    // enumeration (2^48 space per action/id pair).
-    phraseSha8: digest.slice(0, 12),
+    confirmCode: randomBytes(6).toString('hex'),
     createdAt: new Date().toISOString(),
   };
 }
 
 /**
- * Deterministic bilingual confirmation phrase bound to the plan content.
- * Same plan always yields the same phrase; different plans never collide in
- * practice (12 hex chars of the canonical-content digest).
+ * Bilingual confirmation phrase wrapping the one-shot random code. The code
+ * is returned exactly once in the staging response and never derivable from
+ * public data.
  */
 export function confirmationPhrase(plan: InstallPlan): string {
   const verb =
     plan.action === 'install' ? '安装 install' : plan.action === 'update' ? '更新 update' : '卸载 uninstall';
-  return `确认 ${verb} ${plan.entry.id} @${plan.phraseSha8} / confirm`;
+  return `确认 ${verb} ${plan.entry.id} @${plan.confirmCode} / confirm`;
 }
 
 interface PendingRecord {
@@ -102,10 +102,15 @@ export class PlanStore {
   constructor(private readonly ttlMs = 10 * 60_000) {}
 
   add(plan: InstallPlan): void {
-    // Never overwrite an existing plan: resetting a confirmed plan back to
-    // planned would reopen a one-shot window.
-    if (this.pending.has(plan.planId)) {
-      throw new CpError(CpErrorCode.invalidPlan, `plan ${plan.planId} already exists`);
+    const existing = this.pending.get(plan.planId);
+    if (existing !== undefined) {
+      // Content-derived ids collide when the same target is staged twice.
+      // Terminal states may be replaced (re-stage after done/rollback);
+      // live plans are never reset, keeping the one-shot window closed.
+      const terminal = existing.state === 'restart-pending' || existing.state === 'rolled-back';
+      if (!terminal) {
+        throw new CpError(CpErrorCode.invalidPlan, `plan ${plan.planId} already exists`);
+      }
     }
     this.pending.set(plan.planId, {
       plan,
@@ -124,7 +129,7 @@ export class PlanStore {
     if (record) record.state = state;
   }
 
-  /** Consume the plan: only the exact phrase, only once, only unexpired. */
+  /** Consume the plan: only the exact code, only once, only unexpired. */
   confirm(planId: string, phrase: string): InstallPlan {
     const record = this.pending.get(planId);
     if (!record) throw new CpError(CpErrorCode.planNotFound, `unknown plan ${planId}`);
@@ -132,7 +137,10 @@ export class PlanStore {
       this.pending.delete(planId);
       throw new CpError(CpErrorCode.planNotFound, `plan ${planId} expired`);
     }
-    if (record.state === 'confirmed' || record.state === 'executing') {
+    // Only a freshly staged ('planned') record may be confirmed. Anything
+    // else — executing, applied, rolled back — refuses as consumed so a
+    // terminal plan can never be replayed.
+    if (record.state !== 'planned') {
       throw new CpError(CpErrorCode.planConsumed, `plan ${planId} was already confirmed`);
     }
     if (phrase.trim() !== confirmationPhrase(record.plan)) {

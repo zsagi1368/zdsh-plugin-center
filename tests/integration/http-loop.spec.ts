@@ -252,7 +252,7 @@ describe('closed loop over real HTTP and child processes', () => {
     expect(manifest.dependencies?.['alpha']).toBeUndefined();
   });
 
-  it('restore endpoint puts pre-install bytes back into the profile', async () => {
+  it('restore endpoint stages then applies with a one-shot code', async () => {
     const h = harness!;
     const pkgOriginal = readFileSync(join(h.profileDir, 'package.json'), 'utf8');
     const staged = await api('POST', '/api2/zdsh-plugin-center/plan/stage', {
@@ -269,9 +269,46 @@ describe('closed loop over real HTTP and child processes', () => {
     const backups = (await api('GET', '/api2/zdsh-plugin-center/backups'))
       .payload as Array<{ name: string; createdAtMs: number }>;
     const oldest = backups.reduce((a, b) => (a.createdAtMs <= b.createdAtMs ? a : b));
-    const restored = await api('POST', '/api2/zdsh-plugin-center/backups/restore', { name: oldest.name });
+
+    // stage the restore, refuse a wrong code, then apply the right one
+    const restoreStaged = await api('POST', '/api2/zdsh-plugin-center/backups/restore', {
+      name: oldest.name,
+    });
+    expect(restoreStaged.status).toBe(200);
+    const { restoreId, code } = restoreStaged.payload as { restoreId: string; code: string };
+
+    const wrong = await api('POST', '/api2/zdsh-plugin-center/backups/restore/apply', {
+      restoreId,
+      code: `${code.slice(0, -1)}0`,
+    });
+    expect(wrong.status).toBe(400);
+
+    const restored = await api('POST', '/api2/zdsh-plugin-center/backups/restore/apply', {
+      restoreId,
+      code,
+    });
     expect(restored.status).toBe(200);
     expect(readFileSync(join(h.profileDir, 'package.json'), 'utf8')).toBe(pkgOriginal);
+
+    // one-shot consumption: replaying the same pair is refused
+    const replay = await api('POST', '/api2/zdsh-plugin-center/backups/restore/apply', {
+      restoreId,
+      code,
+    });
+    expect(replay.status).toBe(404);
+  });
+
+  it('refuses to re-apply a plan that already reached a terminal state', async () => {
+    const staged = await api('POST', '/api2/zdsh-plugin-center/plan/stage', {
+      action: 'install',
+      entryId: 'owner/alpha',
+    });
+    const { planId, phrase } = staged.payload as { planId: string; phrase: string };
+    const first = await api('POST', '/api2/zdsh-plugin-center/plan/apply', { planId, phrase });
+    expect(first.status).toBe(200);
+    // the store now holds restart-pending; confirmation is gone
+    const replay = await api('POST', '/api2/zdsh-plugin-center/plan/apply', { planId, phrase });
+    expect(replay.status).toBeGreaterThanOrEqual(400);
   });
 
   it('runtime identity and guardian status respond without side effects', async () => {

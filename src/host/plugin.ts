@@ -38,21 +38,21 @@ function header(req: IncomingMessage, key: string): string | undefined {
   return Array.isArray(value) ? value[0] : value;
 }
 
-async function readJsonBody(req: IncomingMessage): Promise<unknown> {
+async function readJsonBody(req: IncomingMessage): Promise<{ ok: false } | { ok: true; body: unknown }> {
   const chunks: Buffer[] = [];
   let size = 0;
   for await (const chunk of req) {
     const buf = Buffer.isBuffer(chunk) ? chunk : Buffer.from(chunk as string);
     size += buf.length;
-    if (size > MAX_BODY_BYTES) return undefined;
+    if (size > MAX_BODY_BYTES) return { ok: false };
     chunks.push(buf);
   }
   const text = Buffer.concat(chunks).toString('utf8');
-  if (text.trim() === '') return {};
+  if (text.trim() === '') return { ok: true, body: {} };
   try {
-    return JSON.parse(text) as unknown;
+    return { ok: true, body: JSON.parse(text) as unknown };
   } catch {
-    return undefined;
+    return { ok: false };
   }
 }
 
@@ -77,9 +77,12 @@ export async function serveRequest(
   });
   const method = req.method === 'POST' ? 'POST' : 'GET';
   const needsBody = method === 'POST';
-  const body = needsBody ? await readJsonBody(req) : undefined;
-  if (needsBody && body === undefined) {
-    send(res, { status: 400, payload: { error: { code: 'invalid_plan', message: 'invalid JSON body' } } });
+  const parsed = needsBody ? await readJsonBody(req) : ({ ok: true, body: undefined } as const);
+  if (!parsed.ok) {
+    // Oversized or malformed body: answer once and cut the socket so a
+    // slowloris-style dribble cannot hold the connection open.
+    send(res, { status: 413, payload: { error: { code: 'invalid_plan', message: 'body rejected' } } });
+    req.destroy();
     return;
   }
   const request: RouterRequest = {
@@ -91,20 +94,16 @@ export async function serveRequest(
       origin: header(req, 'origin'),
       [INTENT_HEADER]: header(req, INTENT_HEADER),
     },
-    body,
+    body: parsed.body,
   };
   try {
     send(res, await handleApiRequest(services, request));
-  } catch (error) {
+  } catch {
     // Router handlers never throw; this guards against adapter surprises.
+    // Internal details (paths etc.) stay server-side.
     send(res, {
       status: 500,
-      payload: {
-        error: {
-          code: 'internal',
-          message: error instanceof Error ? error.message : String(error),
-        },
-      },
+      payload: { error: { code: 'internal', message: 'internal error' } },
     });
   }
 }

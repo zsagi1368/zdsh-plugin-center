@@ -98,14 +98,14 @@ describe('plugin center HTTP surface', () => {
       method: 'GET',
       path: ROUTES.entry,
       query: { id: 'owner/alpha' },
-      headers: { host: 'h' },
+      headers: { host: '127.0.0.1' },
     });
     expect(ok.status).toBe(200);
     const bad = await handleApiRequest(services, {
       method: 'GET',
       path: ROUTES.entry,
       query: { id: 'owner/missing' },
-      headers: { host: 'h' },
+      headers: { host: '127.0.0.1' },
     });
     expect(bad.status).toBe(400); // unknown id is a client error (invalid_plan)
   });
@@ -115,7 +115,7 @@ describe('plugin center HTTP surface', () => {
     const noIntent = await handleApiRequest(services, {
       method: 'POST',
       path: ROUTES.stagePlan,
-      headers: { host: 'h' },
+      headers: { host: '127.0.0.1' },
       body: { action: 'install', entryId: 'owner/alpha' },
     });
     expect(noIntent.status).toBe(403);
@@ -124,7 +124,7 @@ describe('plugin center HTTP surface', () => {
     const denied = await handleApiRequest(readOnly, {
       method: 'POST',
       path: ROUTES.stagePlan,
-      headers: { host: 'h', [INTENT_HEADER]: INTENT_HEADER && 'zdsh-plugin-center' },
+      headers: { host: '127.0.0.1', [INTENT_HEADER]: INTENT_HEADER && 'zdsh-plugin-center' },
       body: { action: 'install', entryId: 'owner/alpha' },
     });
     expect(denied.status).toBe(403);
@@ -135,7 +135,7 @@ describe('plugin center HTTP surface', () => {
     const staged = await handleApiRequest(services, {
       method: 'POST',
       path: ROUTES.stagePlan,
-      headers: { host: 'h', origin: 'http://h', [INTENT_HEADER]: 'zdsh-plugin-center' },
+      headers: { host: '127.0.0.1', origin: 'http://127.0.0.1', [INTENT_HEADER]: 'zdsh-plugin-center' },
       body: { action: 'install', entryId: 'owner/alpha' },
     });
     expect(staged.status).toBe(200);
@@ -146,7 +146,7 @@ describe('plugin center HTTP surface', () => {
     const wrong = await handleApiRequest(services, {
       method: 'POST',
       path: ROUTES.applyPlan,
-      headers: { host: 'h', [INTENT_HEADER]: 'zdsh-plugin-center' },
+      headers: { host: '127.0.0.1', [INTENT_HEADER]: 'zdsh-plugin-center' },
       body: { planId, phrase: `${phrase}x` },
     });
     expect(wrong.status).toBe(400);
@@ -154,7 +154,7 @@ describe('plugin center HTTP surface', () => {
     const applied = await handleApiRequest(services, {
       method: 'POST',
       path: ROUTES.applyPlan,
-      headers: { host: 'h', [INTENT_HEADER]: 'zdsh-plugin-center' },
+      headers: { host: '127.0.0.1', [INTENT_HEADER]: 'zdsh-plugin-center' },
       body: { planId, phrase },
     });
     expect(applied.status).toBe(200);
@@ -168,7 +168,7 @@ describe('plugin center HTTP surface', () => {
     const runtime = await handleApiRequest(services, {
       method: 'GET',
       path: ROUTES.runtime,
-      headers: { host: 'h' },
+      headers: { host: '127.0.0.1' },
     });
     expect(runtime.status).toBe(200);
     expect((runtime.payload as { bootId: string }).bootId).toMatch(/[0-9a-f-]{36}/);
@@ -176,7 +176,7 @@ describe('plugin center HTTP surface', () => {
     const missing = await handleApiRequest(services, {
       method: 'GET',
       path: '/api2/zdsh-plugin-center/nope',
-      headers: { host: 'h' },
+      headers: { host: '127.0.0.1' },
     });
     expect(missing.status).toBe(404);
   });

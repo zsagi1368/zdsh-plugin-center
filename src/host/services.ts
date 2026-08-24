@@ -2,7 +2,7 @@ import { homedir } from 'node:os';
 import { isAbsolute, join, resolve, sep } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { existsSync, readFileSync, readdirSync } from 'node:fs';
-import { randomUUID } from 'node:crypto';
+import { randomBytes, randomUUID } from 'node:crypto';
 import { LifecycleEngine, type EngineDeps } from './lifecycle-engine.js';
 import { nodePorts } from './ports.js';
 import { startGuardian, stopGuardian, statusPath, type GuardianStatus } from './guardian.js';
@@ -196,6 +196,10 @@ export class PluginCenterServices {
       port: this.config.webPort ?? 3080,
       launch: this.config.launchCommand ?? { cmd: 'dsh', args: ['web'] },
     });
+    // A failed start is an error, not a 200 carrying ok:false inside.
+    if (!started.ok) {
+      return cpErr('internal', started.reason ?? 'guardian start failed');
+    }
     return cpOk(started);
   }
 
@@ -219,8 +223,8 @@ export class PluginCenterServices {
     return rows.sort((a, b) => b.createdAtMs - a.createdAtMs);
   }
 
-  /** Restore a named backup into the profile with per-file verification. */
-  restoreBackup(name: string): CpResult<{ restored: string[] }> {
+  /** Resolve a backup name to its contained directory, or fail. */
+  private resolveBackupDir(name: string): CpResult<string> {
     if (!/^[A-Za-z0-9][A-Za-z0-9._-]*$/.test(name)) {
       return cpErr('backup_failed', 'malformed backup name');
     }
@@ -229,7 +233,43 @@ export class PluginCenterServices {
     if (!isAbsolute(target) || !target.startsWith(root + sep) || target === root) {
       return cpErr('backup_failed', 'backup path escaped the data root');
     }
-    return this.engine.restoreBackupInto(this.profileDir, target, name);
+    return cpOk(target);
+  }
+
+  private readonly restores = new Map<string, { name: string; dir: string; code: string; expiresAtMs: number }>();
+
+  /** Stage a restore: returns a one-shot id/code pair for the confirm step. */
+  stageRestore(name: string): CpResult<{ restoreId: string; code: string }> {
+    const resolved = this.resolveBackupDir(name);
+    if (!resolved.ok) return resolved;
+    const restoreId = randomBytes(8).toString('hex');
+    const code = randomBytes(6).toString('hex');
+    this.restores.set(restoreId, {
+      name,
+      dir: resolved.data,
+      code,
+      expiresAtMs: Date.now() + 5 * 60_000,
+    });
+    return cpOk({ restoreId, code });
+  }
+
+  /** Consume a staged restore and run the byte-verified copy back. */
+  applyRestore(restoreId: string, code: string): CpResult<{ restored: string[] }> {
+    const staged = this.restores.get(restoreId);
+    if (staged === undefined) {
+      return cpErr('plan_not_found', 'unknown or expired restore request');
+    }
+    if (Date.now() > staged.expiresAtMs) {
+      this.restores.delete(restoreId);
+      return cpErr('plan_not_found', 'restore request expired');
+    }
+    // Wrong codes must NOT burn the ticket: only a fully verified consume
+    // deletes it, so a single typo does not lock the operator out.
+    if (code !== staged.code) {
+      return cpErr('confirmation_mismatch', 'confirmation code does not match');
+    }
+    this.restores.delete(restoreId); // one-shot consumption on success only
+    return this.engine.restoreBackupInto(this.profileDir, staged.dir, staged.name);
   }
 
   get runtime(): RuntimeIdentity {

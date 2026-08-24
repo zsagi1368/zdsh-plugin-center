@@ -101,6 +101,8 @@ const messages = {
     stop: '停止',
     backupsLabel: '备份快照',
     restoreBtn: '恢复',
+    confirmRestore: (name: string): string =>
+      `恢复备份 ${name}？请输入确认码继续：`,
     uninstall: '卸载',
     pageInfo: (a: number, b: number, c: number): string =>
       `第 ${String(a)} / ${String(b)} 页 · 共 ${String(c)} 条`,
@@ -142,6 +144,8 @@ const messages = {
     stop: 'Stop',
     backupsLabel: 'Backup snapshots',
     restoreBtn: 'Restore',
+    confirmRestore: (name: string): string =>
+      `Restore backup ${name}? Type the confirmation code to continue:`,
     uninstall: 'Uninstall',
     pageInfo: (a: number, b: number, c: number): string =>
       `Page ${String(a)} / ${String(b)} · ${String(c)} entries`,
@@ -207,7 +211,7 @@ interface DialogState {
   planId: string;
   entryId: string;
   action: 'install' | 'update' | 'uninstall';
-  phraseSha8: string;
+  confirmCode: string;
   phraseFull: string;
 }
 
@@ -304,7 +308,7 @@ export function PluginCenterApp(props: { locale?: Locale }): ReactNode {
         entryId,
         action,
         phraseFull: result.phrase,
-        phraseSha8: extractSha8(result.phrase),
+        confirmCode: extractSha8(result.phrase),
       });
     } catch (err) {
       setError(err instanceof Error ? err.message : String(err));
@@ -337,7 +341,17 @@ export function PluginCenterApp(props: { locale?: Locale }): ReactNode {
   const restoreOne = async (name: string): Promise<void> => {
     setError('');
     try {
-      await apiPost(`${API}/backups/restore`, { name });
+      // Two-phase: stage returns a one-shot code the user confirms.
+      const staged = await apiPost<{ restoreId: string; code: string }>(
+        `${API}/backups/restore`,
+        { name },
+      );
+      const typed = window.prompt(t.confirmRestore(name), staged.code);
+      if (typed === null || typed.trim() !== staged.code) return;
+      await apiPost(`${API}/backups/restore/apply`, {
+        restoreId: staged.restoreId,
+        code: staged.code,
+      });
       refreshOps();
     } catch (err) {
       setError(err instanceof Error ? err.message : String(err));
@@ -540,13 +554,13 @@ function ConfirmDialog(props: {
 }): ReactNode {
   const t = messages[props.locale];
   const [typed, setTyped] = useState('');
-  const ready = typed === props.dialog.phraseSha8;
+  const ready = typed === props.dialog.confirmCode;
   return (
     <div className="zdsh-pc-dialog-backdrop" role="presentation">
       <div className="zdsh-pc-dialog" role="dialog" aria-modal="true">
         <strong>{t.confirmTitle}</strong>
         <div className="zdsh-pc-note">{`${props.dialog.action} · ${props.dialog.entryId}`}</div>
-        <div className="zdsh-pc-code">{props.dialog.phraseSha8}</div>
+        <div className="zdsh-pc-code">{props.dialog.confirmCode}</div>
         <label className="zdsh-pc-note">{t.confirmHint}</label>
         <input
           className="zdsh-pc-input"

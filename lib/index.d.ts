@@ -165,7 +165,7 @@ interface InstallPlan {
   action: PlanAction;
   profile: string;
   entry: CatalogEntry;
-  phraseSha8: string;
+  confirmCode: string;
   createdAt: string;
 }
 declare class CpError extends Error {
@@ -178,9 +178,9 @@ declare class CpError extends Error {
  */
 declare function createPlan(entry: CatalogEntry, action: PlanAction, profile: string): InstallPlan;
 /**
- * Deterministic bilingual confirmation phrase bound to the plan content.
- * Same plan always yields the same phrase; different plans never collide in
- * practice (12 hex chars of the canonical-content digest).
+ * Bilingual confirmation phrase wrapping the one-shot random code. The code
+ * is returned exactly once in the staging response and never derivable from
+ * public data.
  */
 declare function confirmationPhrase(plan: InstallPlan): string;
 /** One-shot plan store: confirmation consumes the plan exactly once. */
@@ -194,7 +194,7 @@ declare class PlanStore {
     state: PlanState;
   } | null;
   markState(planId: string, state: PlanState): void;
-  /** Consume the plan: only the exact phrase, only once, only unexpired. */
+  /** Consume the plan: only the exact code, only once, only unexpired. */
   confirm(planId: string, phrase: string): InstallPlan;
   /** Drop expired plans; returns the number removed. */
   sweepExpired(nowMs?: number): number;
@@ -382,8 +382,16 @@ declare class PluginCenterServices {
     name: string;
     createdAtMs: number;
   }>;
-  /** Restore a named backup into the profile with per-file verification. */
-  restoreBackup(name: string): CpResult<{
+  /** Resolve a backup name to its contained directory, or fail. */
+  private resolveBackupDir;
+  private readonly restores;
+  /** Stage a restore: returns a one-shot id/code pair for the confirm step. */
+  stageRestore(name: string): CpResult<{
+    restoreId: string;
+    code: string;
+  }>;
+  /** Consume a staged restore and run the byte-verified copy back. */
+  applyRestore(restoreId: string, code: string): CpResult<{
     restored: string[];
   }>;
   get runtime(): RuntimeIdentity;
@@ -472,6 +480,7 @@ declare const ROUTES: {
   readonly guardianToggle: string;
   readonly backups: string;
   readonly backupRestore: string;
+  readonly backupRestoreApply: string;
   readonly restartRequest: string;
 };
 declare const INTENT_HEADER = "x-zdsh-pc-intent";
