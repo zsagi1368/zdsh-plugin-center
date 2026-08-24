@@ -144,10 +144,11 @@ function removePathSafe(path: string): void {
  * into these argv slots, so anything outside this set is refused before a
  * process is created. Deliberately excludes quotes, ampersands, pipes,
  * redirects, carets, percent (cmd env expansion) and bangs (delayed
- * expansion) so shell:true cannot be turned into injection even though the
- * shim resolution needs it.
+ * expansion). Space stays allowed because profile directories legitimately
+ * contain spaces — the data layer below independently pins owner/repo/version
+ * to a much stricter charset.
  */
-const SAFE_ARG = /^[A-Za-z0-9_@+=.,:\\/|#\- ]+$/;
+const SAFE_ARG = /^[A-Za-z0-9_@+=.,:\\/#\- ]+$/;
 
 export function assertSafeArgs(args: readonly string[]): void {
   for (const arg of args) {

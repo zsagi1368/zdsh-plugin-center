@@ -223,7 +223,7 @@ interface BackupRow {
 }
 
 export function extractSha8(phrase: string): string {
-  const match = phrase.match(/@([0-9a-f]{8})\b/);
+  const match = phrase.match(/@([0-9a-f]{12})\b/);
   return match?.[1] ?? '';
 }
 

@@ -34,6 +34,13 @@ describe('ssrc guard host vector table', () => {
     ['embedded credentials', 'https://user:pass@example.com/x'],
     ['garbage url', 'not-a-url'],
     ['mdns .local', 'http://printer.local/x'],
+    ['decimal loopback', 'http://2130706433/'],
+    ['short-form loopback', 'http://127.1/'],
+    ['hex loopback', 'http://0x7f000001/'],
+    ['octal loopback', 'http://0177.0.0.1/'],
+    ['mixed numeric private', 'http://10.1/x'],
+    ['ipv4-compatible v6 hex', 'http://[::7f00:1]/x'],
+    ['nat64 v6', 'http://[64:ff9b::7f00:1]/x'],
   ];
 
   for (const [label, url] of blocked) {

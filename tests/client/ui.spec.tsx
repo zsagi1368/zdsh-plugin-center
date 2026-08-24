@@ -41,8 +41,9 @@ const samplePage = {
 
 describe('pure client helpers', () => {
   it('extracts the confirmation code from a phrase', () => {
-    expect(extractSha8('确认 安装 install owner/alpha @1a2b3c4d / confirm')).toBe('1a2b3c4d');
+    expect(extractSha8('确认 安装 install owner/alpha @1a2b3c4d5e6f / confirm')).toBe('1a2b3c4d5e6f');
     expect(extractSha8('no code here')).toBe('');
+    expect(extractSha8('短码 @1a2b3c4d / confirm')).toBe('');
   });
 
   it('builds bounded market queries', () => {

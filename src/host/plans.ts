@@ -66,11 +66,14 @@ export function createPlan(
   const core = { action, profile, entry };
   const digest = hashPlan(core);
   return {
-    planId: `${digest.slice(0, 12)}-${action}`,
+    planId: `${digest.slice(0, 16)}-${action}`,
     action,
     profile,
     entry,
-    phraseSha8: digest.slice(0, 8),
+    // 12 hex chars: the confirmation code is typed by a human, so keep it
+    // short while leaving no realistic brute-force window for profile
+    // enumeration (2^48 space per action/id pair).
+    phraseSha8: digest.slice(0, 12),
     createdAt: new Date().toISOString(),
   };
 }
@@ -78,7 +81,7 @@ export function createPlan(
 /**
  * Deterministic bilingual confirmation phrase bound to the plan content.
  * Same plan always yields the same phrase; different plans never collide in
- * practice (8 hex chars of the canonical-content digest).
+ * practice (12 hex chars of the canonical-content digest).
  */
 export function confirmationPhrase(plan: InstallPlan): string {
   const verb =
@@ -99,6 +102,11 @@ export class PlanStore {
   constructor(private readonly ttlMs = 10 * 60_000) {}
 
   add(plan: InstallPlan): void {
+    // Never overwrite an existing plan: resetting a confirmed plan back to
+    // planned would reopen a one-shot window.
+    if (this.pending.has(plan.planId)) {
+      throw new CpError(CpErrorCode.invalidPlan, `plan ${plan.planId} already exists`);
+    }
     this.pending.set(plan.planId, {
       plan,
       state: 'planned',

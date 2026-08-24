@@ -41,7 +41,7 @@ describe('plan creation', () => {
     const a = createPlan(ghEntry(), 'install', 'web');
     const b = createPlan(ghEntry(), 'install', 'web');
     expect(confirmationPhrase(a)).toBe(confirmationPhrase(b));
-    expect(a.phraseSha8).toMatch(/^[0-9a-f]{8}$/);
+    expect(a.phraseSha8).toMatch(/^[0-9a-f]{12}$/);
   });
 
   it('different actions or profiles yield different phrases', () => {
@@ -89,5 +89,14 @@ describe('plan store one-shot semantics', () => {
     expect(store.sweepExpired()).toBe(1);
     expect(store.get(plan.planId)).toBeNull();
     expect(() => store.confirm(plan.planId, confirmationPhrase(plan))).toThrow(CpError);
+  });
+
+  it('refuses to overwrite an existing plan id', () => {
+    const store = new PlanStore();
+    const plan = createPlan(ghEntry(), 'install', 'web');
+    store.add(plan);
+    expect(() => store.add(plan)).toThrow(CpError);
+    // the original pending plan survives untouched
+    expect(store.get(plan.planId)?.state).toBe('planned');
   });
 });

@@ -34,7 +34,8 @@ declare function cpOk<T>(data: T): CpResult<T>;
 declare function cpErr<T = never>(code: CpErrorCode, message: string): CpResult<T>;
 /**
  * Normalize a plugin id to the canonical `namespace/name` form.
- * Accepts `@scope/pkg`, `owner/repo` and bare names; rejects empties.
+ * Accepts `@scope/pkg`, `owner/repo` and bare names; rejects empties and any
+ * character outside the safe identifier set (ids flow into command argv).
  */
 declare function normalizePluginId(raw: string): CpResult<string>;
 /** Lifecycle states of a plan as it moves through the engine. */
@@ -126,7 +127,8 @@ interface CatalogEntry {
   updatedAt: string;
 }
 declare function isValidCommit(commit: string): boolean;
-/** Structural validation; ids are normalized to `namespace/name`. */
+/** Structural validation; ids are normalized and every argv-bound field is
+ * pinned to a strict charset (these values reach command construction). */
 declare function validateCatalogEntry(raw: unknown): CpResult<CatalogEntry>;
 /**
  * Candidate entries live in a physically separate discovery pool and are
@@ -178,7 +180,7 @@ declare function createPlan(entry: CatalogEntry, action: PlanAction, profile: st
 /**
  * Deterministic bilingual confirmation phrase bound to the plan content.
  * Same plan always yields the same phrase; different plans never collide in
- * practice (8 hex chars of the canonical-content digest).
+ * practice (12 hex chars of the canonical-content digest).
  */
 declare function confirmationPhrase(plan: InstallPlan): string;
 /** One-shot plan store: confirmation consumes the plan exactly once. */
@@ -234,6 +236,7 @@ declare class LifecycleEngine {
   private readonly deps;
   private readonly plans;
   private readonly states;
+  private queue;
   constructor(deps: EngineDeps);
   private get fs();
   stateOf(planId: string): PlanState;
@@ -251,10 +254,16 @@ declare class LifecycleEngine {
    * Apply a confirmed plan: pre-hash the profile, back it up, run the pinned
    * official CLI, compare post-state, probe health, audit everything — with
    * byte-exact rollback on any failure after the backup succeeded.
+   *
+   * Plans serialize through a per-engine queue so two concurrent applies can
+   * never interleave snapshots and rollbacks against one profile.
    */
   applyPlan(planId: string): Promise<CpResult<{
     state: PlanState;
   }>>;
+  private applyPlanLocked;
+  /** Package name a remove command targets: explicit name, else repo, else id. */
+  private targetPackageName;
   private commandFor;
   /** Restore each backed-up file to its original path and verify bytes. */
   private rollbackFromBackup;
@@ -284,13 +293,16 @@ interface LoadedCatalog {
 }
 /**
  * Three-tier catalog loading with graceful degradation:
- * remote success → fresh (cache rewritten); remote failure → cached snapshot
- * (degraded); nothing cached → bundled seed.
+ * verified remote success → fresh (cache rewritten); anything else falls back
+ * to the digest-checked local cache (`cached`), then the bundled seed.
  */
-declare function loadCatalog(input: CatalogLoadInput, ports: Pick<EnginePortsLike, 'fs' | 'http'>): Promise<CpResult<LoadedCatalog>>;
-interface EnginePortsLike {
-  fs: FileSystemPort;
+declare function loadCatalog(input: CatalogLoadInput, ports: {
+  fs: FileSystemPortLike;
   http: HttpPort;
+}): Promise<CpResult<LoadedCatalog>>;
+interface FileSystemPortLike {
+  readFile(path: string): string | null;
+  writeFileAtomic(path: string, contents: string): void;
 }
 //#endregion
 //#region src/host/services.d.ts
@@ -433,7 +445,8 @@ interface SafeFetchOptions {
 }
 /**
  * fetch wrapper that re-validates every hop (redirects are followed manually)
- * so a redirect cannot smuggle us onto a private address.
+ * so a redirect cannot smuggle us onto a private address, and credential
+ * headers are stripped the moment we leave the original origin.
  */
 declare function safeFetch(rawUrl: string | URL, options?: SafeFetchOptions): Promise<CpResult<{
   status: number;
