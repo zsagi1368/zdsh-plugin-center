@@ -7,7 +7,7 @@
 >
 > 在 DSH 内置的插件中枢里完成插件的发现、信任评估、安全安装、更新、启停与审计——Windows 一等公民。
 
-**Status/状态**: v0.1.0 — first release. Docs: [中文说明](README.zh.md).
+**Status/状态**: v0.2.0 — operations surface + closed-loop verified. Docs: [中文说明](README.zh.md) · [配置](docs/CONFIGURATION.md) · [安全](SECURITY.md)
 
 ## What it is / 它是什么
 
@@ -37,3 +37,14 @@ Then open `Settings → 插件中心` in your web profile. / 安装后打开 设
 ## License
 
 MIT — see [LICENSE](LICENSE).
+
+## Known limitations (v0.x)
+
+- The `restart/request` route reports `not_implemented`; use the guardian
+  toggle routes to manage the watchdog, and restart the host manually.
+- Lifecycle-script gating is advisory when a target's live manifest cannot be
+  fetched; the catalog's declared policy is used instead.
+- DNS pinning for outbound fetches is future work (literal-host SSRF guard
+  only). Full model: [SECURITY.md](SECURITY.md) · every option:
+  [docs/CONFIGURATION.md](docs/CONFIGURATION.md) · branch-native plan:
+  [docs/INTEGRATION-PLAYBOOK.md](docs/INTEGRATION-PLAYBOOK.md)
