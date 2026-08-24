@@ -15,6 +15,13 @@
 
 ---
 
+## Two ways to run it
+
+| | Setup |
+|---|---|
+| **zDSH branch** | Already built in. If you run the [zDSH branch](https://github.com/zsagi1368/deepseek-harness-zDSH) of DeepSeek Harness, Plugin Center ships as a core extension — open **Settings → 插件中心 / Plugin Center** and go. |
+| **Stock DeepSeek Harness** | Install it like any plugin, pinned to a release commit (below). |
+
 ## Why
 
 Installing a DSH plugin today means pasting a CLI command and trusting whatever
@@ -69,7 +76,7 @@ no host patches beyond the standard bundle declaration, no privileged helpers.
 | Node.js | ≥ 22.13 |
 | Platforms | Windows (first-class), macOS, Linux |
 
-## Installation
+## Installation (standalone)
 
 Pin the exact release commit — see the
 [releases page](https://github.com/zsagi1368/zdsh-plugin-center/releases)
@@ -89,7 +96,7 @@ stage a plan               → server validates pins, scripts policy and trust l
 type the confirmation code → consumes the one-shot plan
 apply                      → hash → backup → pinned install → verify → health
 done                       → “restart required” banner; watchdog available
-any failure                 → byte-verified rollback + audit record
+any failure                → byte-verified rollback + audit record
 ```
 
 ## Configuration
@@ -119,7 +126,7 @@ bounded restarts) and accepted residual risks are documented in
 |---|---|
 | [docs/CONFIGURATION.md](docs/CONFIGURATION.md) | every config key, defaults, examples, data layout |
 | [SECURITY.md](SECURITY.md) | threat model and guarantees |
-| [docs/INTEGRATION-PLAYBOOK.md](docs/INTEGRATION-PLAYBOOK.md) | path to becoming branch-native core packages |
+| [docs/INTEGRATION-PLAYBOOK.md](docs/INTEGRATION-PLAYBOOK.md) | packaging notes for host distributions |
 | [CHANGELOG.md](CHANGELOG.md) | release history (bilingual) |
 
 ## Development

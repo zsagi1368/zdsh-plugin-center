@@ -15,6 +15,13 @@
 
 ---
 
+## 两种使用方式
+
+| | 获取方式 |
+|---|---|
+| **zDSH 分支** | 已经内置。[zDSH 分支](https://github.com/zsagi1368/deepseek-harness-zDSH) 将插件中心作为核心扩展随分支分发——打开 **设置 → 插件中心** 即可直接使用，无需任何安装。 |
+| **原版 DeepSeek Harness** | 像普通插件一样按发布 commit 安装（见下文）。 |
+
 ## 为什么做它
 
 现在安装一个 DSH 插件，意味着手敲一条 CLI 命令、然后无条件信任进入 profile
@@ -56,7 +63,7 @@
 | Node.js | ≥ 22.13 |
 | 平台 | Windows（一等公民）、macOS、Linux |
 
-## 安装
+## 安装（独立形态）
 
 请固定精确的发布 commit——当前值见
 [Releases 页面](https://github.com/zsagi1368/zdsh-plugin-center/releases)：
@@ -103,7 +110,7 @@ dsh plugin --profile web add 'git+https://github.com/zsagi1368/zdsh-plugin-cente
 |---|---|
 | [docs/CONFIGURATION.md](docs/CONFIGURATION.md) | 全部配置键、默认值、示例与数据布局 |
 | [SECURITY.md](SECURITY.md) | 威胁模型与安全保证 |
-| [docs/INTEGRATION-PLAYBOOK.md](docs/INTEGRATION-PLAYBOOK.md) | 成为分支原生核心包的路径 |
+| [docs/INTEGRATION-PLAYBOOK.md](docs/INTEGRATION-PLAYBOOK.md) | 宿主发行版打包说明 |
 | [CHANGELOG.md](CHANGELOG.md) | 发布历史（双语） |
 
 ## 本地开发
