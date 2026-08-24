@@ -5,10 +5,10 @@
  * (name/inject/apply). Domain building blocks are re-exported for reuse and
  * for the future branch-integrated form.
  */
-import { apply, inject, name } from './plugin.js';
+import { apply, inject, name } from './plugin.js'
 
-export default apply;
-export { apply, inject, name };
+export default apply
+export { apply, inject, name }
 
 export {
   CpErrorCode,
@@ -19,9 +19,9 @@ export {
   type PlanState,
   type AuditEvent,
   type AuditOutcome,
-} from '../shared/types.js';
-export { assertSafeUrl, safeFetch, isHostAllowed } from '../shared/ssrc-guard.js';
-export { redactRecord, redactValue, isSensitiveValue } from '../shared/redact.js';
+} from '../shared/types.js'
+export { assertSafeUrl, safeFetch, isHostAllowed } from '../shared/ssrc-guard.js'
+export { redactRecord, redactValue, isSensitiveValue } from '../shared/redact.js'
 export {
   validateCatalogEntry,
   sortEntries,
@@ -32,8 +32,8 @@ export {
   type CandidateEntry,
   type EvidenceLevel,
   type CompatLevel,
-} from '../shared/catalog.js';
-export { nodePorts, isInsideRoot, type EnginePorts } from './ports.js';
+} from '../shared/catalog.js'
+export { nodePorts, isInsideRoot, type EnginePorts } from './ports.js'
 export {
   LifecycleEngine,
   buildInstallCmd,
@@ -44,7 +44,7 @@ export {
   toCpResult,
   type LifecycleConfig,
   type EngineDeps,
-} from './lifecycle-engine.js';
+} from './lifecycle-engine.js'
 export {
   createPlan,
   confirmationPhrase,
@@ -52,8 +52,8 @@ export {
   CpError,
   type InstallPlan,
   type PlanAction,
-} from './plans.js';
-export { loadCatalog, type LoadedCatalog, type CatalogLoadInput } from './snapshot.js';
+} from './plans.js'
+export { loadCatalog, type LoadedCatalog, type CatalogLoadInput } from './snapshot.js'
 export {
   PluginCenterServices,
   normalizeConfig,
@@ -64,7 +64,7 @@ export {
   PLUGIN_NAME,
   type PluginCenterConfig,
   type RuntimeIdentity,
-} from './services.js';
+} from './services.js'
 export {
   handleApiRequest,
   ROUTES,
@@ -72,8 +72,8 @@ export {
   INTENT_HEADER,
   type RouterRequest,
   type RouterResponse,
-} from './api.js';
-export { serveRequest, apply as cordisApply, name as cordisName } from './plugin.js';
+} from './api.js'
+export { serveRequest, apply as cordisApply, name as cordisName } from './plugin.js'
 export {
   startGuardian,
   stopGuardian,
@@ -82,10 +82,10 @@ export {
   guardianDir,
   type GuardianConfig,
   type GuardianStatus,
-} from './guardian.js';
+} from './guardian.js'
 export {
   RestartBudget,
   decideAction,
   type GuardianAction,
   type ProbeVerdict,
-} from './restart-budget.js';
+} from './restart-budget.js'

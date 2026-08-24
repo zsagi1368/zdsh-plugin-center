@@ -41,4 +41,4 @@ export const pluginCenterStyles = `
   background:#e5f5ec; color:#116932; }
 .zdsh-pc-audit-row { display:flex; gap:8px; font-size:11px; padding:2px 0;
   font-family:ui-monospace,Menlo,monospace; }
-`;
+`
