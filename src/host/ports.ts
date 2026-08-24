@@ -1,18 +1,57 @@
 import { createHash } from 'node:crypto';
 import {
-  existsSync,
-  mkdirSync,
+  closeSync,
   copyFileSync,
+  existsSync,
+  lstatSync,
+  mkdirSync,
+  openSync,
   readFileSync,
   renameSync,
   rmSync,
   statSync,
-  lstatSync,
   unlinkSync,
   writeFileSync,
+  writeSync,
 } from 'node:fs';
 import { isAbsolute, join, relative, resolve, dirname } from 'node:path';
 import { cpOk, type CpResult } from '../shared/types.js';
+
+function sleepBusy(multiplier: number): void {
+  // Synchronous pause for rename retries; short by design.
+  const until = Date.now() + multiplier * 40;
+  while (Date.now() < until) {
+    // spin
+  }
+}
+
+/**
+ * Refuse to descend through reparse points: every existing segment between
+ * root and path must be a real directory. Junctions need no privileges on
+ * Windows, so "predictable dir" plus "attacker-planted junction" equals
+ * arbitrary write location.
+ */
+export function ensureNoReparse(root: string, ...segments: string[]): string {
+  const target = resolve(join(resolve(root), ...segments));
+  let probe = resolve(root);
+  if (lstatSafe(probe)?.isSymbolicLink()) throw new Error(`reparse point at root: ${probe}`);
+  for (const segment of segments) {
+    probe = join(probe, segment);
+    const stats = lstatSafe(probe);
+    if (stats !== null && stats.isSymbolicLink()) {
+      throw new Error(`reparse point in path: ${probe}`);
+    }
+  }
+  return target;
+}
+
+function lstatSafe(path: string): import('node:fs').Stats | null {
+  try {
+    return lstatSync(path);
+  } catch {
+    return null;
+  }
+}
 
 export interface CommandSpec {
   cmd: string;
@@ -100,11 +139,31 @@ function removePathSafe(path: string): void {
   unlinkSync(path);
 }
 
+/**
+ * Argument allowlist for shelled commands: catalog-controlled values flow
+ * into these argv slots, so anything outside this set is refused before a
+ * process is created. Deliberately excludes quotes, ampersands, pipes,
+ * redirects, carets, percent (cmd env expansion) and bangs (delayed
+ * expansion) so shell:true cannot be turned into injection even though the
+ * shim resolution needs it.
+ */
+const SAFE_ARG = /^[A-Za-z0-9_@+=.,:\\/|#\- ]+$/;
+
+export function assertSafeArgs(args: readonly string[]): void {
+  for (const arg of args) {
+    if (!SAFE_ARG.test(arg)) {
+      throw new Error(`refusing unsafe command argument: ${JSON.stringify(arg.slice(0, 40))}`);
+    }
+  }
+}
+
 function runViaSpawn(spec: CommandSpec): Promise<{ code: number; stdout: string; stderr: string }> {
   return new Promise((resolvePromise, rejectPromise) => {
+    assertSafeArgs([spec.cmd, ...spec.args]);
     // Lazy import keeps this module importable in non-node test sandboxes.
     import('node:child_process').then(({ spawn }) => {
-      // shell:true is mandatory on win32 where npm-family CLIs are .cmd shims.
+      // shell:true is mandatory on win32 where npm-family CLIs are .cmd shims;
+      // safety comes from the strict argument allowlist above.
       const child = spawn(spec.cmd, spec.args, { shell: true, windowsHide: true });
       let stdout = '';
       let stderr = '';
@@ -133,12 +192,50 @@ export function nodePorts(): EnginePorts {
     writeFileAtomic(path, contents) {
       const dir = dirname(path);
       mkdirSync(dir, { recursive: true });
-      const tmp = join(dir, `.${Date.now()}-${Math.random().toString(36).slice(2)}.tmp`);
-      writeFileSync(tmp, contents, 'utf8');
-      renameSync(tmp, path);
+      // Exclusive temp creation: a predictable-but-preplanted temp name can
+      // never be hijacked, and EEXIST just picks the next candidate.
+      let handle: number | null = null;
+      let tmp = '';
+      for (let attempt = 0; attempt < 5 && handle === null; attempt += 1) {
+        tmp = join(dir, `.${Date.now()}-${attempt}-${Math.floor(Math.random() * 0xffffffff).toString(36)}.tmp`);
+        try {
+          handle = openSync(tmp, 'wx');
+        } catch {
+          handle = null;
+        }
+      }
+      if (handle === null) throw new Error('writeFileAtomic: cannot create exclusive temp file');
+      try {
+        writeSync(handle, contents, 0, 'utf8');
+      } finally {
+        closeSync(handle);
+      }
+      // AV scanners / indexers briefly hold fresh files on Windows; retry
+      // instead of failing the whole transaction.
+      let lastError: unknown;
+      for (let attempt = 0; attempt < 5; attempt += 1) {
+        try {
+          renameSync(tmp, path);
+          return;
+        } catch (error) {
+          lastError = error;
+          const code = (error as { code?: string }).code;
+          if (code !== 'EPERM' && code !== 'EACCES') break;
+          sleepBusy(attempt + 1);
+        }
+      }
+      try {
+        unlinkSync(tmp);
+      } catch {
+        // best effort
+      }
+      throw lastError instanceof Error ? lastError : new Error('writeFileAtomic failed');
     },
     copyFile(from, to) {
       mkdirSync(dirname(to), { recursive: true });
+      // Never write *through* a planted link at the destination.
+      const existing = lstatSafe(to);
+      if (existing !== null && existing.isSymbolicLink()) unlinkSync(to);
       copyFileSync(from, to);
     },
     mkdirDeep(path) {

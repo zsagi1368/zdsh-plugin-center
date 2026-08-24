@@ -1,5 +1,6 @@
 import { join } from 'node:path';
-import { readdirSync } from 'node:fs';
+import { appendFileSync, readdirSync } from 'node:fs';
+import { randomUUID } from 'node:crypto';
 import type { AuditEvent } from '../shared/types.js';
 import type { CatalogEntry as Entry } from '../shared/catalog.js';
 import { CpErrorCode, cpErr, cpOk, type CpResult, type PlanState } from '../shared/types.js';
@@ -12,7 +13,7 @@ import {
   type InstallPlan,
   type PlanAction,
 } from './plans.js';
-import type { EnginePorts } from './ports.js';
+import { ensureNoReparse, type EnginePorts } from './ports.js';
 
 /** The three profile files an install touches; the truth lives here. */
 export const PROFILE_FILES = ['package.json', 'pnpm-workspace.yaml', 'cordis.patch.yml'] as const;
@@ -94,6 +95,7 @@ interface BackupRecord {
 export class LifecycleEngine {
   private readonly plans = new PlanStore();
   private readonly states = new Map<string, PlanState>();
+  private queue: Promise<void> = Promise.resolve();
 
   constructor(private readonly deps: EngineDeps) {}
 
@@ -165,8 +167,20 @@ export class LifecycleEngine {
    * Apply a confirmed plan: pre-hash the profile, back it up, run the pinned
    * official CLI, compare post-state, probe health, audit everything — with
    * byte-exact rollback on any failure after the backup succeeded.
+   *
+   * Plans serialize through a per-engine queue so two concurrent applies can
+   * never interleave snapshots and rollbacks against one profile.
    */
-  async applyPlan(planId: string): Promise<CpResult<{ state: PlanState }>> {
+  applyPlan(planId: string): Promise<CpResult<{ state: PlanState }>> {
+    const run = this.queue.then(() => this.applyPlanLocked(planId));
+    this.queue = run.then(
+      () => undefined,
+      () => undefined,
+    );
+    return run;
+  }
+
+  private async applyPlanLocked(planId: string): Promise<CpResult<{ state: PlanState }>> {
     const record = this.plans.get(planId);
     if (!record || record.state !== 'confirmed') {
       return cpErr('invalid_plan', `plan ${planId} is not in confirmed state`);
@@ -178,7 +192,11 @@ export class LifecycleEngine {
       const before = this.snapshotProfile(plan.profile);
 
       // backup every existing profile file
-      const dir = join(this.deps.config.dataRoot, 'backups', `${Date.now()}-${plan.action}`);
+      const dir = ensureNoReparse(
+        this.deps.config.dataRoot,
+        'backups',
+        `${Date.now()}-${plan.action}-${randomUUID().slice(0, 8)}`,
+      );
       this.fs.mkdirDeep(dir);
       const pairs: BackupRecord['pairs'] = [];
       for (const snap of before) {
@@ -378,10 +396,13 @@ export class LifecycleEngine {
       this.deps.auditSink(line);
       return;
     }
-    const logPath = join(this.deps.config.dataRoot, 'audit-log.jsonl');
-    const existing = this.fs.readFile(logPath) ?? '';
-    const separator = existing === '' || existing.endsWith('\n') ? '' : '\n';
-    this.fs.writeFileAtomic(logPath, `${existing}${separator}${line}\n`);
+    try {
+      // Append-only: concurrent plans interleave instead of clobbering, and
+      // an IO failure here must never flip the plan outcome.
+      appendFileSync(join(this.deps.config.dataRoot, 'audit-log.jsonl'), `${line}\n`, 'utf8');
+    } catch {
+      // best effort; the sink variant above remains the testable path
+    }
   }
 }
 
