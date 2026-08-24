@@ -19,12 +19,18 @@ export const ROUTES = {
   applyPlan: [API_PREFIX, 'plan/apply'].join('/'),
   audit: [API_PREFIX, 'audit'].join('/'),
   runtime: [API_PREFIX, 'runtime'].join('/'),
+  guardianStatus: [API_PREFIX, 'guardian/status'].join('/'),
+  guardianToggle: [API_PREFIX, 'guardian/toggle'].join('/'),
+  backups: [API_PREFIX, 'backups'].join('/'),
+  backupRestore: [API_PREFIX, 'backups/restore'].join('/'),
   restartRequest: [API_PREFIX, 'restart/request'].join('/'),
 } as const;
 
 const WRITE_PATHS: ReadonlySet<string> = new Set([
   ROUTES.stagePlan,
   ROUTES.applyPlan,
+  ROUTES.guardianToggle,
+  ROUTES.backupRestore,
   ROUTES.restartRequest,
 ]);
 
@@ -138,6 +144,28 @@ export async function handleApiRequest(
   }
   if (matches(request, 'GET', ROUTES.runtime)) {
     return json(200, services.runtime);
+  }
+  if (matches(request, 'GET', ROUTES.guardianStatus)) {
+    return json(200, services.guardianStatus());
+  }
+  if (matches(request, 'GET', ROUTES.backups)) {
+    return json(200, services.backupsList());
+  }
+  if (matches(request, 'POST', ROUTES.guardianToggle)) {
+    const body = (request.body ?? {}) as { action?: string };
+    if (body.action !== 'start' && body.action !== 'stop') {
+      return json(400, {
+        error: { code: 'invalid_plan', message: 'action must be start|stop' },
+      });
+    }
+    return fromCp(await services.guardianToggle(body.action));
+  }
+  if (matches(request, 'POST', ROUTES.backupRestore)) {
+    const body = (request.body ?? {}) as { name?: string };
+    if (!body.name) {
+      return json(400, { error: { code: 'invalid_plan', message: 'name is required' } });
+    }
+    return fromCp(services.restoreBackup(body.name));
   }
   if (matches(request, 'GET', ROUTES.audit)) {
     return json(200, await readAuditTail(resolveDataRoot(services.config)));

@@ -258,6 +258,13 @@ declare class LifecycleEngine {
   private commandFor;
   /** Restore each backed-up file to its original path and verify bytes. */
   private rollbackFromBackup;
+  /**
+   * Operator-facing restore: copy a backup directory (base-named profile
+   * files) back into the profile, byte-verified per file.
+   */
+  restoreBackupInto(profileDir: string, backupDir: string, backupName: string): CpResult<{
+    restored: string[];
+  }>;
   private snapshotProfile;
   private now;
   private audit;
@@ -299,6 +306,13 @@ interface PluginCenterConfig {
   remoteCatalogUrl?: string | null;
   /** Seed catalog override (tests / custom distributions). */
   catalogSeedPath?: string;
+  /** Loopback port of the DSH web host the guardian watches. */
+  webPort?: number;
+  /** Command that boots the host again (guardian relaunch). */
+  launchCommand?: {
+    cmd: string;
+    args: string[];
+  };
   mutationsEnabled: boolean;
 }
 declare function resolveDataRoot(config?: PluginCenterConfig): string;
@@ -337,6 +351,29 @@ declare class PluginCenterServices {
   confirmAndRun(planId: string, phrase: string): Promise<CpResult<{
     state: PlanState;
   }>>;
+  /** Last known watchdog state from disk; idle when never started. */
+  guardianStatus(): {
+    running: boolean;
+    state: string;
+    port: number;
+    checkedAtMs?: number;
+    restartsUsed?: number;
+  };
+  /** Start or stop the detached watchdog. */
+  guardianToggle(action: 'start' | 'stop'): Promise<CpResult<{
+    ok: boolean;
+    pid?: number;
+    reason?: string;
+  }>>;
+  /** Backup snapshots under the data root, newest first. */
+  backupsList(): Array<{
+    name: string;
+    createdAtMs: number;
+  }>;
+  /** Restore a named backup into the profile with per-file verification. */
+  restoreBackup(name: string): CpResult<{
+    restored: string[];
+  }>;
   get runtime(): RuntimeIdentity;
   get profileDir(): string;
   catalog(forceRefresh?: boolean): Promise<CpResult<LoadedCatalog>>;
@@ -418,6 +455,10 @@ declare const ROUTES: {
   readonly applyPlan: string;
   readonly audit: string;
   readonly runtime: string;
+  readonly guardianStatus: string;
+  readonly guardianToggle: string;
+  readonly backups: string;
+  readonly backupRestore: string;
   readonly restartRequest: string;
 };
 declare const INTENT_HEADER = "x-zdsh-pc-intent";

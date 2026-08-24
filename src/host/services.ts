@@ -1,10 +1,11 @@
 import { homedir } from 'node:os';
-import { isAbsolute, join, resolve } from 'node:path';
+import { isAbsolute, join, resolve, sep } from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { existsSync } from 'node:fs';
+import { existsSync, readFileSync, readdirSync } from 'node:fs';
 import { randomUUID } from 'node:crypto';
 import { LifecycleEngine, type EngineDeps } from './lifecycle-engine.js';
 import { nodePorts } from './ports.js';
+import { startGuardian, stopGuardian, statusPath, type GuardianStatus } from './guardian.js';
 import type { PlanAction } from './plans.js';
 import { loadCatalog, type LoadedCatalog } from './snapshot.js';
 import {
@@ -14,7 +15,7 @@ import {
   type CatalogEntry,
   type Page,
 } from '../shared/catalog.js';
-import { cpOk, type CpResult, type PlanState } from '../shared/types.js';
+import { cpErr, cpOk, type CpResult, type PlanState } from '../shared/types.js';
 
 export const PLUGIN_NAME = 'zdsh-plugin-center';
 
@@ -29,6 +30,10 @@ export interface PluginCenterConfig {
   remoteCatalogUrl?: string | null;
   /** Seed catalog override (tests / custom distributions). */
   catalogSeedPath?: string;
+  /** Loopback port of the DSH web host the guardian watches. */
+  webPort?: number;
+  /** Command that boots the host again (guardian relaunch). */
+  launchCommand?: { cmd: string; args: string[] };
   mutationsEnabled: boolean;
 }
 
@@ -67,6 +72,16 @@ export function normalizeConfig(raw: Record<string, unknown> = {}): PluginCenter
           ? cfg.remoteCatalogUrl
           : null,
     catalogSeedPath: typeof cfg.catalogSeedPath === 'string' ? cfg.catalogSeedPath : undefined,
+    webPort: typeof cfg.webPort === 'number' && Number.isFinite(cfg.webPort) ? cfg.webPort : 3080,
+    launchCommand:
+      cfg.launchCommand && typeof cfg.launchCommand === 'object'
+        ? {
+            cmd: String((cfg.launchCommand as { cmd?: unknown }).cmd ?? 'dsh'),
+            args: Array.isArray((cfg.launchCommand as { args?: unknown }).args)
+              ? ((cfg.launchCommand as { args: unknown[] }).args as unknown[]).map(String)
+              : ['web'],
+          }
+        : undefined,
     mutationsEnabled: cfg.mutationsEnabled !== false,
   };
 }
@@ -141,6 +156,80 @@ export class PluginCenterServices {
     const confirmed = this.engine.confirmPlan(planId, phrase);
     if (!confirmed.ok) return confirmed;
     return this.engine.applyPlan(planId);
+  }
+
+  // ------------------------------------------------------- operations surface
+
+  /** Last known watchdog state from disk; idle when never started. */
+  guardianStatus(): {
+    running: boolean;
+    state: string;
+    port: number;
+    checkedAtMs?: number;
+    restartsUsed?: number;
+  } {
+    const port = this.config.webPort ?? 3080;
+    try {
+      const parsed = JSON.parse(readFileSync(statusPath(resolveDataRoot(this.config)), 'utf8')) as GuardianStatus;
+      return {
+        running: parsed.state !== 'give-up',
+        state: parsed.state,
+        port,
+        checkedAtMs: parsed.checkedAtMs,
+        restartsUsed: parsed.restartsUsed,
+      };
+    } catch {
+      return { running: false, state: 'idle', port };
+    }
+  }
+
+  /** Start or stop the detached watchdog. */
+  async guardianToggle(
+    action: 'start' | 'stop',
+  ): Promise<CpResult<{ ok: boolean; pid?: number; reason?: string }>> {
+    if (action === 'stop') {
+      const stopped = stopGuardian(resolveDataRoot(this.config));
+      return cpOk({ ok: true, reason: stopped.stopped ? 'stopped' : 'not-running' });
+    }
+    const started = await startGuardian({
+      dataRoot: resolveDataRoot(this.config),
+      port: this.config.webPort ?? 3080,
+      launch: this.config.launchCommand ?? { cmd: 'dsh', args: ['web'] },
+    });
+    return cpOk(started);
+  }
+
+  /** Backup snapshots under the data root, newest first. */
+  backupsList(): Array<{ name: string; createdAtMs: number }> {
+    const dir = join(resolveDataRoot(this.config), 'backups');
+    let names: string[];
+    try {
+      names = readdirSync(dir).map((n) => n.toString());
+    } catch {
+      return [];
+    }
+    const rows: Array<{ name: string; createdAtMs: number }> = [];
+    for (const name of names) {
+      try {
+        rows.push({ name, createdAtMs: Number.parseInt(name.split('-')[0] ?? '0', 10) || 0 });
+      } catch {
+        // skip malformed directory names
+      }
+    }
+    return rows.sort((a, b) => b.createdAtMs - a.createdAtMs);
+  }
+
+  /** Restore a named backup into the profile with per-file verification. */
+  restoreBackup(name: string): CpResult<{ restored: string[] }> {
+    if (!/^[A-Za-z0-9][A-Za-z0-9._-]*$/.test(name)) {
+      return cpErr('backup_failed', 'malformed backup name');
+    }
+    const root = resolve(join(resolveDataRoot(this.config), 'backups'));
+    const target = resolve(join(root, name));
+    if (!isAbsolute(target) || !target.startsWith(root + sep) || target === root) {
+      return cpErr('backup_failed', 'backup path escaped the data root');
+    }
+    return this.engine.restoreBackupInto(this.profileDir, target, name);
   }
 
   get runtime(): RuntimeIdentity {

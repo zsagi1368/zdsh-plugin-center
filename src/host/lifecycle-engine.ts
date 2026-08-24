@@ -1,4 +1,5 @@
 import { join } from 'node:path';
+import { readdirSync } from 'node:fs';
 import type { AuditEvent } from '../shared/types.js';
 import type { CatalogEntry as Entry } from '../shared/catalog.js';
 import { CpErrorCode, cpErr, cpOk, type CpResult, type PlanState } from '../shared/types.js';
@@ -308,6 +309,47 @@ export class LifecycleEngine {
       if (!expected || this.fs.hashFile(pair.originalPath) !== expected) return false;
     }
     return true;
+  }
+
+  /**
+   * Operator-facing restore: copy a backup directory (base-named profile
+   * files) back into the profile, byte-verified per file.
+   */
+  restoreBackupInto(profileDir: string, backupDir: string, backupName: string): CpResult<{ restored: string[] }> {
+    let names: string[];
+    try {
+      names = readdirSync(backupDir).map((n) => n.toString());
+    } catch {
+      return cpErr('backup_failed', `backup ${backupName} is not readable`);
+    }
+    if (names.length === 0) {
+      return cpErr('backup_failed', `backup ${backupName} is empty`);
+    }
+    const restored: string[] = [];
+    for (const name of names) {
+      if (!PROFILE_FILES.includes(name as (typeof PROFILE_FILES)[number])) continue;
+      const sourcePath = join(backupDir, name);
+      const contents = this.fs.readFile(sourcePath);
+      if (contents === null) return cpErr('backup_failed', `cannot read ${name} in backup`);
+      const expected = this.fs.hashFile(sourcePath);
+      try {
+        this.fs.writeFileAtomic(join(profileDir, name), contents);
+      } catch (error) {
+        return cpErr('backup_failed', error instanceof Error ? error.message : String(error));
+      }
+      if (!expected || this.fs.hashFile(join(profileDir, name)) !== expected) {
+        return cpErr('hash_mismatch', `restored ${name} failed verification`);
+      }
+      restored.push(name);
+    }
+    this.audit({
+      ts: this.now(),
+      action: 'backup.restore',
+      step: backupName,
+      outcome: 'ok',
+      detail: { restored: restored.join(',') },
+    });
+    return cpOk({ restored });
   }
 
   private snapshotProfile(profileDir: string): FileSnapshot[] {

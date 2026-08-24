@@ -95,6 +95,13 @@ const messages = {
     empty: '没有匹配的插件。',
     prevPage: '上一页',
     nextPage: '下一页',
+    opsHeading: '运维',
+    guardianLabel: '看门狗',
+    start: '启动',
+    stop: '停止',
+    backupsLabel: '备份快照',
+    restoreBtn: '恢复',
+    uninstall: '卸载',
     pageInfo: (a: number, b: number, c: number): string =>
       `第 ${String(a)} / ${String(b)} 页 · 共 ${String(c)} 条`,
     sourceOf: (entry: EntryView): string =>
@@ -129,6 +136,13 @@ const messages = {
     empty: 'No matching plugins.',
     prevPage: 'Prev',
     nextPage: 'Next',
+    opsHeading: 'Operations',
+    guardianLabel: 'Watchdog',
+    start: 'Start',
+    stop: 'Stop',
+    backupsLabel: 'Backup snapshots',
+    restoreBtn: 'Restore',
+    uninstall: 'Uninstall',
     pageInfo: (a: number, b: number, c: number): string =>
       `Page ${String(a)} / ${String(b)} · ${String(c)} entries`,
     sourceOf: (entry: EntryView): string =>
@@ -192,8 +206,20 @@ export function marketUrl(params: {
 interface DialogState {
   planId: string;
   entryId: string;
+  action: 'install' | 'update' | 'uninstall';
   phraseSha8: string;
   phraseFull: string;
+}
+
+interface GuardianView {
+  running: boolean;
+  state: string;
+  port: number;
+}
+
+interface BackupRow {
+  name: string;
+  createdAtMs: number;
 }
 
 export function extractSha8(phrase: string): string {
@@ -215,6 +241,8 @@ export function PluginCenterApp(props: { locale?: Locale }): ReactNode {
   const [applied, setApplied] = useState(false);
   const [error, setError] = useState('');
   const [auditTail, setAuditTail] = useState<AuditRow[]>([]);
+  const [guardian, setGuardian] = useState<GuardianView | null>(null);
+  const [backups, setBackups] = useState<BackupRow[]>([]);
 
   useEffect(() => {
     let alive = true;
@@ -248,20 +276,33 @@ export function PluginCenterApp(props: { locale?: Locale }): ReactNode {
           }
         })
         .catch(() => undefined);
+      apiGet<GuardianView>(`${API}/guardian/status`).then(setGuardian).catch(() => undefined);
     }, 5000);
+    apiGet<GuardianView>(`${API}/guardian/status`).then(setGuardian).catch(() => undefined);
+    apiGet<BackupRow[]>(`${API}/backups`).then(setBackups).catch(() => undefined);
     return () => window.clearInterval(timer);
   }, []);
 
-  const stageInstall = async (entryId: string): Promise<void> => {
+  const refreshOps = (): void => {
+    apiGet<GuardianView>(`${API}/guardian/status`).then(setGuardian).catch(() => undefined);
+    apiGet<BackupRow[]>(`${API}/backups`).then(setBackups).catch(() => undefined);
+    apiGet<AuditRow[]>(`${API}/audit`).then(setAuditTail).catch(() => undefined);
+  };
+
+  const stagePlanFor = async (
+    entryId: string,
+    action: 'install' | 'update' | 'uninstall',
+  ): Promise<void> => {
     setError('');
     try {
       const result = await apiPost<{ planId: string; phrase: string }>(`${API}/plan/stage`, {
-        action: 'install',
+        action,
         entryId,
       });
       setDialog({
         planId: result.planId,
         entryId,
+        action,
         phraseFull: result.phrase,
         phraseSha8: extractSha8(result.phrase),
       });
@@ -276,10 +317,30 @@ export function PluginCenterApp(props: { locale?: Locale }): ReactNode {
       await apiPost(`${API}/plan/apply`, { planId: dialog.planId, phrase: dialog.phraseFull });
       setDialog(null);
       setApplied(true);
-      apiGet<AuditRow[]>(`${API}/audit`).then(setAuditTail).catch(() => undefined);
+      refreshOps();
     } catch (err) {
       setError(err instanceof Error ? err.message : String(err));
       setDialog(null);
+    }
+  };
+
+  const toggleGuardian = async (action: 'start' | 'stop'): Promise<void> => {
+    setError('');
+    try {
+      await apiPost(`${API}/guardian/toggle`, { action });
+      refreshOps();
+    } catch (err) {
+      setError(err instanceof Error ? err.message : String(err));
+    }
+  };
+
+  const restoreOne = async (name: string): Promise<void> => {
+    setError('');
+    try {
+      await apiPost(`${API}/backups/restore`, { name });
+      refreshOps();
+    } catch (err) {
+      setError(err instanceof Error ? err.message : String(err));
     }
   };
 
@@ -340,7 +401,12 @@ export function PluginCenterApp(props: { locale?: Locale }): ReactNode {
           {t.recommendedOnly}
         </label>
       </div>
-      <EntryList data={data} locale={locale} onInstall={(id) => void stageInstall(id)} />
+      <EntryList
+        data={data}
+        locale={locale}
+        onInstall={(id) => void stagePlanFor(id, 'install')}
+        onUninstall={(id) => void stagePlanFor(id, 'uninstall')}
+      />
       <div className="zdsh-pc-pager">
         <button className="zdsh-pc-btn" disabled={page <= 1} onClick={() => setPage(page - 1)}>
           {t.prevPage}
@@ -349,6 +415,33 @@ export function PluginCenterApp(props: { locale?: Locale }): ReactNode {
         <button className="zdsh-pc-btn" disabled={page >= pageCount} onClick={() => setPage(page + 1)}>
           {t.nextPage}
         </button>
+      </div>
+      <div>
+        <div className="zdsh-pc-note">{`${t.opsHeading} · ${t.guardianLabel}${guardian ? ` [${guardian.state}]` : ''}`}</div>
+        <div className="zdsh-pc-toolbar">
+          <button className="zdsh-pc-btn" onClick={() => void toggleGuardian('start')}>
+            {t.start}
+          </button>
+          <button className="zdsh-pc-btn" onClick={() => void toggleGuardian('stop')}>
+            {t.stop}
+          </button>
+        </div>
+      </div>
+      <div>
+        <div className="zdsh-pc-note">{`${t.opsHeading} · ${t.backupsLabel}`}</div>
+        {backups.length === 0 ? (
+          <div className="zdsh-pc-note">—</div>
+        ) : (
+          backups.slice(0, 5).map((row) => (
+            <div className="zdsh-pc-audit-row" key={row.name}>
+              <span>{new Date(row.createdAtMs).toISOString()}</span>
+              <span>{row.name}</span>
+              <button className="zdsh-pc-btn" onClick={() => void restoreOne(row.name)}>
+                {t.restoreBtn}
+              </button>
+            </div>
+          ))
+        )}
       </div>
       {auditTail.length > 0 ? (
         <div>
@@ -378,6 +471,7 @@ function EntryList(props: {
   data: MarketPageView | null;
   locale: Locale;
   onInstall: (entryId: string) => void;
+  onUninstall: (entryId: string) => void;
 }): ReactNode {
   const t = messages[props.locale];
   if (props.data === null) return <div className="zdsh-pc-note">{t.loading}</div>;
@@ -385,13 +479,24 @@ function EntryList(props: {
   return (
     <div className="zdsh-pc-list">
       {props.data.items.map((item) => (
-        <EntryCard key={item.id} entry={item} locale={props.locale} onInstall={() => props.onInstall(item.id)} />
+        <EntryCard
+          key={item.id}
+          entry={item}
+          locale={props.locale}
+          onInstall={() => props.onInstall(item.id)}
+          onUninstall={() => props.onUninstall(item.id)}
+        />
       ))}
     </div>
   );
 }
 
-function EntryCard(props: { entry: EntryView; locale: Locale; onInstall: () => void }): ReactNode {
+function EntryCard(props: {
+  entry: EntryView;
+  locale: Locale;
+  onInstall: () => void;
+  onUninstall: () => void;
+}): ReactNode {
   const t = messages[props.locale];
   const item = props.entry;
   const evidenceClass =
@@ -415,9 +520,14 @@ function EntryCard(props: { entry: EntryView; locale: Locale; onInstall: () => v
           <span className="zdsh-pc-badge zdsh-pc-badge-dim">{t.sourceOf(item)}</span>
         </div>
       </div>
-      <button className="zdsh-pc-btn" disabled={item.evidence === 'discovered'} onClick={props.onInstall}>
-        {t.install}
-      </button>
+      <div className="zdsh-pc-toolbar" style={{ flexDirection: 'column', alignItems: 'stretch', gap: '6px' }}>
+        <button className="zdsh-pc-btn" disabled={item.evidence === 'discovered'} onClick={props.onInstall}>
+          {t.install}
+        </button>
+        <button className="zdsh-pc-btn" disabled={item.evidence === 'discovered'} onClick={props.onUninstall}>
+          {t.uninstall}
+        </button>
+      </div>
     </div>
   );
 }
@@ -435,7 +545,7 @@ function ConfirmDialog(props: {
     <div className="zdsh-pc-dialog-backdrop" role="presentation">
       <div className="zdsh-pc-dialog" role="dialog" aria-modal="true">
         <strong>{t.confirmTitle}</strong>
-        <div className="zdsh-pc-note">{`install · ${props.dialog.entryId}`}</div>
+        <div className="zdsh-pc-note">{`${props.dialog.action} · ${props.dialog.entryId}`}</div>
         <div className="zdsh-pc-code">{props.dialog.phraseSha8}</div>
         <label className="zdsh-pc-note">{t.confirmHint}</label>
         <input
