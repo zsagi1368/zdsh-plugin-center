@@ -280,9 +280,16 @@ export class LifecycleEngine {
     }
   }
 
+  /** Package name a remove command targets: explicit name, else repo, else id. */
+  private targetPackageName(entry: InstallPlan['entry']): string {
+    if (entry.packageName) return entry.packageName;
+    if (entry.repo) return entry.repo;
+    return entry.id;
+  }
+
   private commandFor(plan: InstallPlan): { cmd: string; args: string[] } {
     if (plan.action === 'uninstall') {
-      return buildRemoveCmd(plan.profile, plan.entry.packageName ?? plan.entry.id);
+      return buildRemoveCmd(plan.profile, this.targetPackageName(plan.entry));
     }
     if (plan.entry.source === 'github') {
       return buildInstallCmd(
