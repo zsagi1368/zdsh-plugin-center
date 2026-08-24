@@ -40,6 +40,11 @@ uphold, and the residual risks users accept. 中文要点见文末。
 
 ## Residual risks (accepted for v0.x)
 
+- **Binding assumption.** The loopback Host gate is a browser-side CSRF /
+  rebinding defense; it assumes the DSH webserver binds to `127.0.0.1` only.
+  If a deployment exposes the host on a LAN address, that binding — not this
+  plugin — becomes the trust boundary. This requirement must hold when the
+  plugin is integrated branch-natively (see INTEGRATION-PLAYBOOK).
 - The official CLI itself executes package installation (including dependency
   lifecycle scripts) once a plan is applied; the script gate above is
   advisory when live manifest data cannot be fetched.

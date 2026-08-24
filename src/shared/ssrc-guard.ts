@@ -83,8 +83,15 @@ export function isHostAllowed(hostname: string): boolean {
     if (hex.slice(0, 6).every((n) => n === 0) && !hex.slice(6).every((n) => n === 0)) {
       return judgeIpv4Literal(hexGroupsToIpv4(hex[6] as number, hex[7] as number));
     }
-    // NAT64 64:ff9b::/96 embeds an IPv4 address in the low 32 bits
-    if (first === 0x0064 && hex[1] === 0xff9b && hex.slice(2, 6).every((n) => n === 0)) {
+    // NAT64 embeds an IPv4 address in the low 32 bits — both the well-known
+    // prefix 64:ff9b::/96 (RFC 6052) and the local-use 64:ff9b:1::/96
+    // (RFC 8215) count.
+    if (
+      first === 0x0064 &&
+      hex[1] === 0xff9b &&
+      (hex[2] === 0 || hex[2] === 1) &&
+      hex.slice(3, 6).every((n) => n === 0)
+    ) {
       return judgeIpv4Literal(hexGroupsToIpv4(hex[6] as number, hex[7] as number));
     }
     if ((first & 0xfe00) === 0xfc00) return false; // fc00::/7 unique local
