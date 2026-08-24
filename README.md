@@ -1,50 +1,151 @@
-# zDSH Plugin Center（zDSH 插件中心）
+<h1 align="center">zDSH Plugin Center</h1>
 
-[![CI](https://github.com/zsagi1368/zdsh-plugin-center/actions/workflows/ci.yml/badge.svg)](./.github/workflows/ci.yml)
-[![License: MIT](https://img.shields.io/badge/license-MIT-2563eb?style=flat-square)](./LICENSE)
+<p align="center">
+  <a href="https://github.com/zsagi1368/zdsh-plugin-center/actions/workflows/ci.yml"><img src="https://github.com/zsagi1368/zdsh-plugin-center/actions/workflows/ci.yml/badge.svg" alt="CI"></a>
+  <a href="https://github.com/zsagi1368/zdsh-plugin-center/releases/latest"><img src="https://img.shields.io/github/v/release/zsagi1368/zdsh-plugin-center?style=flat-square" alt="Release"></a>
+  <img src="https://img.shields.io/badge/node-%E2%89%A522.13-339933?style=flat-square" alt="Node ≥22.13">
+  <a href="./LICENSE"><img src="https://img.shields.io/badge/license-MIT-2563eb?style=flat-square" alt="License: MIT"></a>
+</p>
 
-> Discover, trust, install, update and audit DSH plugins from one built-in hub — safely, on Windows first.
->
-> 在 DSH 内置的插件中枢里完成插件的发现、信任评估、安全安装、更新、启停与审计——Windows 一等公民。
+<p align="center">
+  A built-in plugin hub for DeepSeek Harness (DSH): discover, evaluate, install,
+  update and audit plugins from one settings page — safely, on Windows first.<br>
+  中文文档见 <a href="README.zh.md">README.zh.md</a>
+</p>
 
-**Status/状态**: v0.2.0 — operations surface + closed-loop verified. Docs: [中文说明](README.zh.md) · [配置](docs/CONFIGURATION.md) · [安全](SECURITY.md)
+---
 
-## What it is / 它是什么
+## Why
 
-An independent, clean-room DSH plugin that combines the best ideas from three
-community plugin-hub projects into one safer, more convenient plugin center:
+Installing a DSH plugin today means pasting a CLI command and trusting whatever
+lands in your profile. Plugin Center turns that into a reviewed, reversible
+workflow driven from the web UI — while staying a normal plugin itself:
+no host patches beyond the standard bundle declaration, no privileged helpers.
 
-一个独立的净室 DSH 插件，把三个社区插件市场/管理器项目之长整合为一个更安全、更便捷的插件中心：
+## Features
 
-- **Marketplace discovery** with offline fallback and candidate quarantine /
-  市场发现：离线降级 + 候选隔离视图
-- **Trust evidence**: pinned commits, manifest integrity, lifecycle-script gating,
-  permission preview / 信任证据：commit 固定、清单完整性、脚本门禁、权限预览
-- **Safe lifecycle transactions**: plan → confirm → hash → backup → install →
-  health check → rollback / 安全生命周期事务：计划→确认→哈希→备份→安装→健康检查→回滚
-- **Cross-platform restart orchestration** (no launchd required) /
-  跨平台重启编排（不依赖 launchd）
-- **Audit viewer** with secret redaction / 无秘密审计查看器
+**Marketplace**
+- Bounded catalog browsing (24 entries per page) with search, category filter
+  and a recommended-only toggle
+- Three badges per entry: trust evidence · compatibility projection · pinned
+  source (GitHub commit or npm version)
+- Graceful offline behavior: live catalog → digest-checked cache → bundled
+  snapshot, with a visible banner whenever data may be stale
 
-## Install / 安装
+**Trust model**
+- GitHub installs are pinned to an exact 40-hex commit; npm installs to an
+  exact semver — floating branches are rejected before a plan can exist
+- Four-level evidence scale (`discovered` → `recommended`) and a three-level
+  compatibility projection shown on every card
+- Remote catalogs must ship a matching SHA-256 sidecar; unsigned snapshots are
+  refused
+
+**Safe lifecycle transactions**
+- Every install / update / uninstall is a one-shot plan confirmed by a random
+  code returned exactly once at staging
+- Before anything runs: profile files are hashed and backed up. After: state
+  is re-compared, a health probe runs, and any failure rolls the profile back
+  byte-for-byte with verification
+- Lifecycle scripts declared by a target are denied unless explicitly
+  allow-listed (`script_blocked`)
+- An append-only audit trail records every step — filtered through secret
+  redaction before it touches disk
+
+**Restart orchestration**
+- A detached Node watchdog probes a hardcoded loopback address and relaunches
+  the host after crashes, bounded to 3 restarts per 5 minutes with a give-up
+  circuit — no launchd, schtasks or systemd required
+
+**Operations & UX**
+- Watchdog controls, backup restore and uninstall live next to the market
+- Fully bilingual interface (中文默认，可切换 English) built on theme alias
+  variables, with mobile-friendly layout
+
+## Requirements
+
+| | |
+|---|---|
+| DeepSeek Harness | a profile with the web client enabled |
+| Node.js | ≥ 22.13 |
+| Platforms | Windows (first-class), macOS, Linux |
+
+## Installation
+
+Pin the exact release commit — see the
+[releases page](https://github.com/zsagi1368/zdsh-plugin-center/releases)
+for the current one:
 
 ```bash
 dsh plugin --profile web add 'git+https://github.com/zsagi1368/zdsh-plugin-center.git#<release-commit>'
 ```
 
-Then open `Settings → 插件中心` in your web profile. / 安装后打开 设置 → 插件中心。
+Then open **Settings → 插件中心 / Plugin Center** in your web profile.
 
-## License
+## How an install flows
 
-MIT — see [LICENSE](LICENSE).
+```
+browse / search            → bounded pages, badges, detail metadata
+stage a plan               → server validates pins, scripts policy and trust level
+type the confirmation code → consumes the one-shot plan
+apply                      → hash → backup → pinned install → verify → health
+done                       → “restart required” banner; watchdog available
+any failure                 → byte-verified rollback + audit record
+```
+
+## Configuration
+
+Everything is optional; defaults serve the bundled catalog read-write against
+the `web` profile. Common switches:
+
+| Key | Effect |
+|---|---|
+| `remoteCatalogUrl` | point at a signed remote catalog (e.g. [zdsh-plugin-registry](https://github.com/zsagi1368/zdsh-plugin-registry)) |
+| `mutationsEnabled: false` | read-only kiosk mode |
+| `webPort` | loopback port of the DSH web host used by the watchdog |
+
+Full reference with examples and the `~/.zdsh-plugin-center` data layout:
+[docs/CONFIGURATION.md](docs/CONFIGURATION.md)
+
+## Security
+
+Threat model, guarantees (pinned targets, one-shot plans, byte-exact rollback,
+script gating, SSRF guard, same-origin + intent gates, secret-free audit,
+bounded restarts) and accepted residual risks are documented in
+[SECURITY.md](SECURITY.md).
+
+## Project documentation
+
+| Document | Contents |
+|---|---|
+| [docs/CONFIGURATION.md](docs/CONFIGURATION.md) | every config key, defaults, examples, data layout |
+| [SECURITY.md](SECURITY.md) | threat model and guarantees |
+| [docs/INTEGRATION-PLAYBOOK.md](docs/INTEGRATION-PLAYBOOK.md) | path to becoming branch-native core packages |
+| [CHANGELOG.md](CHANGELOG.md) | release history (bilingual) |
+
+## Development
+
+```bash
+pnpm install
+pnpm lint        # tsc --noEmit, strict
+pnpm build       # tsdown: host ESM + client loader bundle + watchdog entry
+pnpm test        # vitest: unit + contract + closed-loop integration suites
+```
+
+The integration suite boots a real HTTP server and drives a real child-process
+CLI stand-in against real temp profile files. CI runs the full gate on both
+ubuntu-latest and windows-latest.
+
+Agent-facing conventions live in [AGENTS.md](AGENTS.md).
 
 ## Known limitations (v0.x)
 
-- The `restart/request` route reports `not_implemented`; use the guardian
-  toggle routes to manage the watchdog, and restart the host manually.
-- Lifecycle-script gating is advisory when a target's live manifest cannot be
-  fetched; the catalog's declared policy is used instead.
-- DNS pinning for outbound fetches is future work (literal-host SSRF guard
-  only). Full model: [SECURITY.md](SECURITY.md) · every option:
-  [docs/CONFIGURATION.md](docs/CONFIGURATION.md) · branch-native plan:
-  [docs/INTEGRATION-PLAYBOOK.md](docs/INTEGRATION-PLAYBOOK.md)
+- The `restart/request` route reports `not_implemented`; manage the watchdog
+  through its toggle routes and restart the host manually for now.
+- Script gating falls back to the catalog's declared policy when a target's
+  live manifest cannot be fetched.
+- Outbound fetches judge literal hosts only; resolved-address pinning is
+  future work.
+
+## License
+
+[MIT](./LICENSE)

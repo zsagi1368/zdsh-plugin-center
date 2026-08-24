@@ -1,14 +1,14 @@
 # AGENTS.md — zdsh-plugin-center 开发守则
 
-你是本仓（`zdsh-plugin-center`，zDSH 插件中心）的开发/测试/文档代理。本仓是**净室独立插件**：整合三家社区仓库（dsh-hub-plugin / dsh-safe-plugin-manager / dsh-plugins）的思想，但**零代码复用**。
+你是本仓（`zdsh-plugin-center`，zDSH 插件中心）的开发/测试/文档代理。本仓是**全新独立插件**：所有代码、文案与结构均为原创。
 
 ## 硬性红线
 
-1. **净室**：禁止从以下来源复制任何代码、API 形状、文案或资源：
-   - `G:\000Github\DSH\PluginR&D\sources\`（社区克隆，只读参考机制）
+1. **原创性**：禁止复制任何第三方代码、API 形状、文案或资源进入本仓，来源包括但不限于：
+   - `G:\000Github\DSH\PluginR&D\sources\` 下的参考克隆（只读，仅用于理解平台机制）
    - `G:\000Github\DSH\Fork\`（zDSH 分支，只读研究平台契约）
-   - 任何 npm/GitHub 第三方实现。
-   思想级借鉴（数据流、状态机、安全策略、UX 结构）允许且鼓励；逐行翻译不允许。
+   - 任何 npm / GitHub 第三方实现。
+   理解平台契约与安全设计思想允许；逐行翻译或形状抄袭不允许。公开文档（README/CHANGELOG/Release）不得出现"参考/整合自某项目"类表述——本产品定位为全新插件。
 2. **Fork 树绝对只读**：对 `G:\000Github\DSH\Fork\` 只允许读命令与 git log/show/diff/status。
 3. 源码文件一律用 Write/Edit 工具创建修改；不要用 bash 重定向/heredoc 写 .ts/.tsx/.js/.mjs。
 4. 临时文件放 `G:\000Github\DSH\TMP\`，不落仓库根。

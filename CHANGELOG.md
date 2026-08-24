@@ -37,10 +37,8 @@ Operations surface, adversarial hardening, first-party registry.
 
 ## [0.1.0] - 2026-08-24
 
-First public release of the zDSH Plugin Center as an independent, clean-room
-DSH plugin. Ideas integrated and re-designed from three community plugin-hub
-projects (dsh-hub-plugin, dsh-safe-plugin-manager, dsh-plugins); zero code
-reused.
+First public release of the zDSH Plugin Center: a built-in hub for
+discovering, evaluating and safely installing DSH plugins from the web UI.
 
 ### Added
 
@@ -66,7 +64,7 @@ reused.
 - **Web client**: settings section (order 30) with bilingual zh/en UI,
   theme alias variables, one-shot confirm dialog requiring the phrase code,
   boot guard refreshing once when the host reloads under a new boot id.
-- Seed catalog with six verified installable community plugins.
+- Seed catalog with six verified, installable plugins.
 - CI: lint + build + test on ubuntu and windows runners.
 
 [0.2.0]: https://github.com/zsagi1368/zdsh-plugin-center/releases/tag/v0.2.0
@@ -98,7 +96,7 @@ reused.
 
 ## [0.1.0] - 2026-08-24
 
-zDSH 插件中心首个公开版本（独立净室插件）。整合三家社区插件市场/管理器项目的思想并重新设计，零代码复用。
+zDSH 插件中心首个公开版本：在 Web 界面中发现、评估并安全安装 DSH 插件的内置中枢。
 
 ### 新增
 
@@ -109,5 +107,5 @@ zDSH 插件中心首个公开版本（独立净室插件）。整合三家社区
 - **HTTP 面** `/api2/zdsh-plugin-center/*`：同源校验、变更意图头、只读模式、请求体上限、稳定状态码映射。
 - **自守护看门狗**：独立 Node 进程探测固定环回地址，5 分钟内最多重启 3 次后熔断放弃，状态落盘；不依赖 launchd/schtasks/systemd。
 - **Web 客户端**：设置页分区（order 30），中英双语，主题别名变量，需输入确认码的一次性确认弹窗，宿主重载后 Boot Guard 单次刷新。
-- 种子目录含六个已核实的可安装社区插件。
+- 种子目录含六个已核实的可安装插件。
 - CI：ubuntu 与 windows 双跑道的 lint + 构建 + 测试。
