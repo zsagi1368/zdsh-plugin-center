@@ -9,7 +9,7 @@
 import { existsSync, writeFileSync, mkdirSync } from 'node:fs';
 import { readFile } from 'node:fs/promises';
 import { isAbsolute, join, resolve, sep } from 'node:path';
-import { randomUUID } from 'node:crypto';
+import { createHash, randomUUID } from 'node:crypto';
 import type { GuardianConfig, GuardianStatus } from './guardian.js';
 import { decideAction, RestartBudget } from './restart-budget.js';
 
@@ -51,9 +51,22 @@ export function validatedConfigPath(raw: string): string {
   return resolved;
 }
 
+/**
+ * Load the watchdog config and verify its sha256 sidecar. A config that was
+ * tampered with after startGuardian wrote it is refused outright, so write
+ * access to the data root alone cannot plant a relaunch command.
+ */
 async function loadConfig(rawPath: string): Promise<GuardianConfig> {
   const cfgPath = validatedConfigPath(rawPath);
-  const text = await readFile(cfgPath, 'utf8');
+  const [text, expectedDigest] = await Promise.all([
+    readFile(cfgPath, 'utf8'),
+    readFile(`${cfgPath}.sha256`, 'utf8').catch(() => null),
+  ]);
+  if (expectedDigest === null) throw new Error('watchdog config is missing its integrity sidecar');
+  const actualDigest = createHash('sha256').update(text, 'utf8').digest('hex');
+  if (actualDigest !== expectedDigest.trim()) {
+    throw new Error('watchdog config failed integrity verification');
+  }
   return JSON.parse(text) as GuardianConfig;
 }
 

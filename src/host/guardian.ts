@@ -7,6 +7,7 @@
  * restart budget, and records its status under `<dataRoot>/guardian/`.
  */
 import { existsSync, readFileSync, unlinkSync, writeFileSync } from 'node:fs';
+import { createHash } from 'node:crypto';
 import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
@@ -80,7 +81,12 @@ export async function startGuardian(config: GuardianConfig): Promise<PidResult> 
     }
   }
   const cfgFile = join(dir, 'config.json');
-  writeFileSync(cfgFile, JSON.stringify(config), 'utf8');
+  const configBytes = JSON.stringify(config);
+  writeFileSync(cfgFile, configBytes, 'utf8');
+  // Integrity sidecar: the entry refuses a tampered config, so a write-only
+  // primitive cannot escalate into arbitrary relaunch commands.
+  const digest = createHash('sha256').update(configBytes, 'utf8').digest('hex');
+  writeFileSync(`${cfgFile}.sha256`, digest, 'utf8');
   const result = await import('node:child_process').then(
     ({ spawn }) => {
       // Same argument-list shape as ports.runViaSpawn; no shell anywhere.
