@@ -25,7 +25,7 @@ export interface PluginCenterConfig {
   profileDir?: string | undefined
   /** DSH storage home; resolution order: config → env → zDSH dir → upstream dir. */
   dshHome?: string | undefined
-  /** Data root for backups/audit/cache; defaults to ~/.zdsh-plugin-center. */
+  /** Data root for backups/audit/cache; resolution chain: config → DSH_BRANCH_HOME → DSH_HOME → ~/.zdsh-plugin-center. */
   dataRoot?: string | undefined
   remoteCatalogUrl?: string | null | undefined
   /** Seed catalog override (tests / custom distributions). */
@@ -37,9 +37,41 @@ export interface PluginCenterConfig {
   mutationsEnabled: boolean
 }
 
-export function resolveDataRoot(config?: PluginCenterConfig): string {
-  if (!config?.dataRoot) return join(homedir(), '.zdsh-plugin-center')
-  return isAbsolute(config.dataRoot) ? config.dataRoot : resolve(config.dataRoot)
+/**
+ * Resolve the persistent data root backing backups, audit logs, caches and
+ * watchdog state. Priority chain (high → low):
+ *
+ * 1. `config.dataRoot` — explicit configuration; relative paths resolve
+ *    against the current working directory (historical behavior).
+ * 2. `DSH_BRANCH_HOME` set → `<DSH_BRANCH_HOME>/plugin-center`.
+ * 3. `DSH_HOME` set → `<DSH_HOME>/zdsh/plugin-center`.
+ * 4. `~/.zdsh-plugin-center` — historical default, unchanged.
+ *
+ * Empty or whitespace-only environment values are skipped to the next level.
+ * This chain mirrors the main-repo `resolveBranchStorageRoot`
+ * (dsh-plugin-governance, src/persistence/plugin-persistence.ts): once zDSH
+ * exports `DSH_HOME`, all first-party plugin data collapses under
+ * `<DSH_HOME>/zdsh/`.
+ *
+ * @param env - Environment variable source, defaults to `process.env`
+ *   (injected for tests, same pattern as the mirror implementation).
+ */
+export function resolveDataRoot(
+  config?: PluginCenterConfig,
+  env: NodeJS.ProcessEnv = process.env,
+): string {
+  if (config?.dataRoot) {
+    return isAbsolute(config.dataRoot) ? config.dataRoot : resolve(config.dataRoot)
+  }
+  const branchHome = env.DSH_BRANCH_HOME
+  if (branchHome !== undefined && branchHome.trim().length > 0) {
+    return join(resolve(branchHome), 'plugin-center')
+  }
+  const dshHome = env.DSH_HOME
+  if (dshHome !== undefined && dshHome.trim().length > 0) {
+    return join(resolve(dshHome), 'zdsh', 'plugin-center')
+  }
+  return join(homedir(), '.zdsh-plugin-center')
 }
 
 /** Profile directory layout follows the host convention `$DSH_HOME/profiles/<name>`. */
