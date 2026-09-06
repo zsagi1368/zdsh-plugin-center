@@ -152,9 +152,9 @@ interface Page<T> {
 /** Bounded pagination; out-of-range pages clamp to the last non-empty page. */
 declare function paginate<T>(items: T[], page: number, pageSize: number): Page<T>;
 interface SearchQuery {
-  text?: string;
-  category?: string;
-  evidenceOnlyRecommended?: boolean;
+  text?: string | undefined;
+  category?: string | undefined;
+  evidenceOnlyRecommended?: boolean | undefined;
 }
 declare function searchEntries(entries: CatalogEntry[], query: SearchQuery): CatalogEntry[];
 //#endregion
@@ -284,12 +284,12 @@ declare function toCpResult<T>(error: unknown): CpResult<T>;
 interface CatalogLoadInput {
   seedPath: string;
   cachePath: string;
-  remoteUrl?: string;
+  remoteUrl?: string | undefined;
 }
 interface LoadedCatalog {
   entries: CatalogEntry[];
   mode: 'fresh' | 'cached' | 'seed';
-  fetchedAt?: string;
+  fetchedAt?: string | undefined;
 }
 /**
  * Three-tier catalog loading with graceful degradation:
@@ -310,24 +310,43 @@ declare const PLUGIN_NAME = "zdsh-plugin-center";
 interface PluginCenterConfig {
   defaultProfile: string;
   /** Explicit profile directory override; resolved from dshHome when absent. */
-  profileDir?: string;
+  profileDir?: string | undefined;
   /** DSH storage home; resolution order: config → env → zDSH dir → upstream dir. */
-  dshHome?: string;
-  /** Data root for backups/audit/cache; defaults to ~/.zdsh-plugin-center. */
-  dataRoot?: string;
-  remoteCatalogUrl?: string | null;
+  dshHome?: string | undefined;
+  /** Data root for backups/audit/cache; resolution chain: config → DSH_BRANCH_HOME → DSH_HOME → ~/.zdsh-plugin-center. */
+  dataRoot?: string | undefined;
+  remoteCatalogUrl?: string | null | undefined;
   /** Seed catalog override (tests / custom distributions). */
-  catalogSeedPath?: string;
+  catalogSeedPath?: string | undefined;
   /** Loopback port of the DSH web host the guardian watches. */
-  webPort?: number;
+  webPort?: number | undefined;
   /** Command that boots the host again (guardian relaunch). */
   launchCommand?: {
     cmd: string;
     args: string[];
-  };
+  } | undefined;
   mutationsEnabled: boolean;
 }
-declare function resolveDataRoot(config?: PluginCenterConfig): string;
+/**
+ * Resolve the persistent data root backing backups, audit logs, caches and
+ * watchdog state. Priority chain (high → low):
+ *
+ * 1. `config.dataRoot` — explicit configuration; relative paths resolve
+ *    against the current working directory (historical behavior).
+ * 2. `DSH_BRANCH_HOME` set → `<DSH_BRANCH_HOME>/plugin-center`.
+ * 3. `DSH_HOME` set → `<DSH_HOME>/zdsh/plugin-center`.
+ * 4. `~/.zdsh-plugin-center` — historical default, unchanged.
+ *
+ * Empty or whitespace-only environment values are skipped to the next level.
+ * This chain mirrors the main-repo `resolveBranchStorageRoot`
+ * (dsh-plugin-governance, src/persistence/plugin-persistence.ts): once zDSH
+ * exports `DSH_HOME`, all first-party plugin data collapses under
+ * `<DSH_HOME>/zdsh/`.
+ *
+ * @param env - Environment variable source, defaults to `process.env`
+ *   (injected for tests, same pattern as the mirror implementation).
+ */
+declare function resolveDataRoot(config?: PluginCenterConfig, env?: NodeJS.ProcessEnv): string;
 /** Profile directory layout follows the host convention `$DSH_HOME/profiles/<name>`. */
 declare function resolveProfileDir(config: PluginCenterConfig): string;
 declare function normalizeConfig(raw?: Record<string, unknown>): PluginCenterConfig;
@@ -344,7 +363,7 @@ interface RuntimeIdentity {
 declare function createRuntimeIdentity(): RuntimeIdentity;
 interface MarketPage extends Page<CatalogEntry> {
   mode: LoadedCatalog['mode'];
-  fetchedAt?: string;
+  fetchedAt?: string | undefined;
 }
 declare class PluginCenterServices {
   private readonly ports;
@@ -399,12 +418,12 @@ declare class PluginCenterServices {
   catalog(forceRefresh?: boolean): Promise<CpResult<LoadedCatalog>>;
   /** Bounded, sorted, filtered market page. */
   marketPage(params: {
-    page?: number;
-    pageSize?: number;
-    q?: string;
-    category?: string;
-    onlyRecommended?: boolean;
-    forceRefresh?: boolean;
+    page?: number | undefined;
+    pageSize?: number | undefined;
+    q?: string | undefined;
+    category?: string | undefined;
+    onlyRecommended?: boolean | undefined;
+    forceRefresh?: boolean | undefined;
   }): Promise<CpResult<MarketPage>>;
   entryById(entryId: string): Promise<CpResult<CatalogEntry>>;
 }
@@ -447,9 +466,9 @@ declare function isHostAllowed(hostname: string): boolean;
 /** Validate an outbound URL; returns the parsed URL or a closed error. */
 declare function assertSafeUrl(raw: string | URL): CpResult<URL>;
 interface SafeFetchOptions {
-  timeoutMs?: number;
-  maxRedirects?: number;
-  headers?: Record<string, string>;
+  timeoutMs?: number | undefined;
+  maxRedirects?: number | undefined;
+  headers?: Record<string, string> | undefined;
 }
 /**
  * fetch wrapper that re-validates every hop (redirects are followed manually)
