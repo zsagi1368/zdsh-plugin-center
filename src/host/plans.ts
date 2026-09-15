@@ -5,10 +5,37 @@ import { CpErrorCode, type PlanState } from '../shared/types.js'
 
 export type PlanAction = 'install' | 'uninstall' | 'update'
 
+/**
+ * Mirror of the mainline launcher's profile-name predicate
+ * (`@deepseek-ai/dsh-app-boot` `resolveProfileDir`, profile.ts): the CLI
+ * takes a bare profile NAME, never a directory path, and throws for the
+ * values below. Kept byte-for-byte in semantics so the plans we stage are
+ * always submittable to the real `dsh plugin --profile <name>` command
+ * (contract-plugin-center.md CP-1). The rejection surface (empty, '/', '\\',
+ * '.', '..', 'node_modules') was verified against the launcher's
+ * `resolveProfileDir` throw condition in profile.ts during the CP-1 review,
+ * and is pinned here by the `isValidProfileName mirrors the launcher
+ * predicate surface` case in `tests/host/plans.spec.ts`.
+ */
+export function isValidProfileName(name: string): boolean {
+  return !(
+    name === ''
+    || name.includes('/')
+    || name.includes('\\')
+    || name === '.'
+    || name === '..'
+    // The launcher-maintained flat module fallback lives at this sibling path.
+    || name === 'node_modules'
+  )
+}
+
 export interface InstallPlan {
   planId: string
   action: PlanAction
+  /** Bare profile NAME handed to `dsh plugin --profile <name>` (see {@link isValidProfileName}). */
   profile: string
+  /** Absolute profile DIRECTORY backing the file-level operations (snapshot/backup/restore). */
+  profileDir: string
   entry: CatalogEntry
   confirmCode: string
   createdAt: string
@@ -28,6 +55,7 @@ function hashPlan(plan: Omit<InstallPlan, 'planId' | 'confirmCode' | 'createdAt'
   const canonical = JSON.stringify({
     action: plan.action,
     profile: plan.profile,
+    profileDir: plan.profileDir,
     id: plan.entry.id,
     source: plan.entry.source,
     pinnedCommit: plan.entry.pinnedCommit ?? null,
@@ -40,11 +68,18 @@ function hashPlan(plan: Omit<InstallPlan, 'planId' | 'confirmCode' | 'createdAt'
 /**
  * Build an install plan from a catalog entry. GitHub entries must pin a full
  * commit; anything else is rejected as untrusted before a plan can exist.
+ *
+ * Two profile layers, deliberately split (CP-1): `profile` is the bare NAME
+ * the official CLI accepts on `--profile`; `profileDir` is the absolute
+ * directory the engine snapshots, backs up and restores around the CLI run.
+ * A directory-shaped `profile` would be rejected by the real CLI at runtime,
+ * so it is refused here at staging time instead.
  */
 export function createPlan(
   entry: CatalogEntry,
   action: PlanAction,
   profile: string,
+  profileDir: string,
 ): InstallPlan {
   if (entry.source === 'github') {
     if (!entry.pinnedCommit || !isValidCommit(entry.pinnedCommit)) {
@@ -60,10 +95,16 @@ export function createPlan(
   if (entry.source === 'npm' && (!entry.packageName || !entry.version)) {
     throw new CpError(CpErrorCode.invalidPlan, 'npm entry missing packageName/version')
   }
-  if (!profile.trim()) {
-    throw new CpError(CpErrorCode.invalidPlan, 'profile is required')
+  if (!isValidProfileName(profile)) {
+    throw new CpError(
+      CpErrorCode.invalidPlan,
+      `profile must be a bare name for \`dsh plugin --profile\`, got ${JSON.stringify(profile)}`,
+    )
   }
-  const core = { action, profile, entry }
+  if (!profileDir.trim()) {
+    throw new CpError(CpErrorCode.invalidPlan, 'profileDir is required')
+  }
+  const core = { action, profile, profileDir, entry }
   const digest = hashPlan(core)
   return {
     // plan id derives from content (stable, auditable); the confirmation
@@ -72,6 +113,7 @@ export function createPlan(
     planId: `${digest.slice(0, 16)}-${action}`,
     action,
     profile,
+    profileDir,
     entry,
     confirmCode: randomBytes(6).toString('hex'),
     createdAt: new Date().toISOString(),

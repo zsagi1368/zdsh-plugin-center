@@ -74,12 +74,31 @@ export function resolveDataRoot(
   return join(homedir(), '.zdsh-plugin-center')
 }
 
-/** Profile directory layout follows the host convention `$DSH_HOME/profiles/<name>`. */
+/** Storage home the host CLI resolves profiles against (config → env → defaults). */
+function profileHome(config: PluginCenterConfig): string {
+  return (
+    config.dshHome ?? process.env.DSH_BRANCH_HOME ?? process.env.DSH_HOME ?? defaultDshHome()
+  )
+}
+
+/**
+ * The profile directory the OFFICIAL CLI (`dsh plugin --profile <name>`,
+ * app-boot resolveProfileDir) will touch for the configured profile name.
+ * Directory semantics stay mirrored on the host layout `$DSH_HOME/profiles/<name>`;
+ * the name itself must be bare (see plans.isValidProfileName).
+ */
+export function cliProfileDir(config: PluginCenterConfig): string {
+  return join(profileHome(config), 'profiles', config.defaultProfile)
+}
+
+/**
+ * The profile DIRECTORY backing hub-side file operations (snapshot, backup,
+ * restore). This is the directory key of the CP-1 split; the CLI surface
+ * takes only the bare profile NAME (`config.defaultProfile`).
+ */
 export function resolveProfileDir(config: PluginCenterConfig): string {
   if (config.profileDir) return config.profileDir
-  const home =
-    config.dshHome ?? process.env.DSH_BRANCH_HOME ?? process.env.DSH_HOME ?? defaultDshHome()
-  return join(home, 'profiles', config.defaultProfile)
+  return cliProfileDir(config)
 }
 
 function defaultDshHome(): string {
@@ -174,14 +193,34 @@ export class PluginCenterServices {
     })
   }
 
-  /** Stage a plan for a catalog entry; returns the plan id and its phrase. */
+  /**
+   * Stage a plan for a catalog entry; returns the plan id and its phrase.
+   *
+   * CP-1 discipline: the CLI command is built with the bare profile NAME
+   * (`config.defaultProfile`, validated downstream), while snapshot and
+   * rollback key on the resolved profile DIRECTORY. A `profileDir` override
+   * that diverges from the directory the official CLI would resolve for that
+   * name is refused at staging time — otherwise the backup and the mutation
+   * would target different profiles and rollback could not be trusted.
+   */
   async stagePlan(
     action: PlanAction,
     entryId: string,
   ): Promise<CpResult<{ planId: string; phrase: string }>> {
+    if (resolveProfileDir(this.config) !== cliProfileDir(this.config)) {
+      return cpErr(
+        'invalid_plan',
+        `profileDir override diverges from the directory the dsh CLI resolves for profile "${this.config.defaultProfile}"; align it via dshHome instead`,
+      )
+    }
     const entry = await this.entryById(entryId)
     if (!entry.ok) return entry
-    const built = this.engine.buildPlan(entry.data, action, this.profileDir)
+    const built = this.engine.buildPlan(
+      entry.data,
+      action,
+      this.config.defaultProfile,
+      this.profileDir,
+    )
     if (!built.ok) return built
     return cpOk({ planId: built.data.plan.planId, phrase: built.data.phrase })
   }

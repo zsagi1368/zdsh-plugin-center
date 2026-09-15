@@ -160,10 +160,26 @@ declare function searchEntries(entries: CatalogEntry[], query: SearchQuery): Cat
 //#endregion
 //#region src/host/plans.d.ts
 type PlanAction = 'install' | 'uninstall' | 'update';
+/**
+ * Mirror of the mainline launcher's profile-name predicate
+ * (`@deepseek-ai/dsh-app-boot` `resolveProfileDir`, profile.ts): the CLI
+ * takes a bare profile NAME, never a directory path, and throws for the
+ * values below. Kept byte-for-byte in semantics so the plans we stage are
+ * always submittable to the real `dsh plugin --profile <name>` command
+ * (contract-plugin-center.md CP-1). The rejection surface (empty, '/', '\\',
+ * '.', '..', 'node_modules') was verified against the launcher's
+ * `resolveProfileDir` throw condition in profile.ts during the CP-1 review,
+ * and is pinned here by the `isValidProfileName mirrors the launcher
+ * predicate surface` case in `tests/host/plans.spec.ts`.
+ */
+declare function isValidProfileName(name: string): boolean;
 interface InstallPlan {
   planId: string;
   action: PlanAction;
+  /** Bare profile NAME handed to `dsh plugin --profile <name>` (see {@link isValidProfileName}). */
   profile: string;
+  /** Absolute profile DIRECTORY backing the file-level operations (snapshot/backup/restore). */
+  profileDir: string;
   entry: CatalogEntry;
   confirmCode: string;
   createdAt: string;
@@ -175,8 +191,14 @@ declare class CpError extends Error {
 /**
  * Build an install plan from a catalog entry. GitHub entries must pin a full
  * commit; anything else is rejected as untrusted before a plan can exist.
+ *
+ * Two profile layers, deliberately split (CP-1): `profile` is the bare NAME
+ * the official CLI accepts on `--profile`; `profileDir` is the absolute
+ * directory the engine snapshots, backs up and restores around the CLI run.
+ * A directory-shaped `profile` would be rejected by the real CLI at runtime,
+ * so it is refused here at staging time instead.
  */
-declare function createPlan(entry: CatalogEntry, action: PlanAction, profile: string): InstallPlan;
+declare function createPlan(entry: CatalogEntry, action: PlanAction, profile: string, profileDir: string): InstallPlan;
 /**
  * Bilingual confirmation phrase wrapping the one-shot random code. The code
  * is returned exactly once in the staging response and never derivable from
@@ -217,16 +239,23 @@ interface EngineDeps {
   healthProbe?: HealthProbe;
   auditSink?: (line: string) => void;
 }
-/** Pure command builders so tests can pin exact shapes without spawning. */
-declare function buildInstallCmd(profile: string, owner: string, repo: string, commit: string): {
+/**
+ * Pure command builders so tests can pin exact shapes without spawning.
+ *
+ * `profileName` is the bare profile NAME, not a directory: the official CLI
+ * resolves `--profile <name>` itself and rejects any value containing a path
+ * separator (app-boot resolveProfileDir — CP-1). The directory lives on the
+ * plan as `profileDir` and is used only for file-level operations.
+ */
+declare function buildInstallCmd(profileName: string, owner: string, repo: string, commit: string): {
   cmd: string;
   args: string[];
 };
-declare function buildNpmAddCmd(profile: string, pkgName: string, version: string): {
+declare function buildNpmAddCmd(profileName: string, pkgName: string, version: string): {
   cmd: string;
   args: string[];
 };
-declare function buildRemoveCmd(profile: string, pkgName: string): {
+declare function buildRemoveCmd(profileName: string, pkgName: string): {
   cmd: string;
   args: string[];
 };
@@ -243,8 +272,11 @@ declare class LifecycleEngine {
   /**
    * Build and register a plan. `targetManifest` (when the registry supplied
    * the package manifest) runs the lifecycle-script gate before staging.
+   *
+   * `profileName` / `profileDir` carry the two CLI-vs-directory profile
+   * layers (CP-1); see {@link createPlan}.
    */
-  buildPlan(entry: CatalogEntry, action: PlanAction, profile: string, targetManifest?: Record<string, unknown>): CpResult<{
+  buildPlan(entry: CatalogEntry, action: PlanAction, profileName: string, profileDir: string, targetManifest?: Record<string, unknown>): CpResult<{
     plan: InstallPlan;
     phrase: string;
   }>;
@@ -347,7 +379,18 @@ interface PluginCenterConfig {
  *   (injected for tests, same pattern as the mirror implementation).
  */
 declare function resolveDataRoot(config?: PluginCenterConfig, env?: NodeJS.ProcessEnv): string;
-/** Profile directory layout follows the host convention `$DSH_HOME/profiles/<name>`. */
+/**
+ * The profile directory the OFFICIAL CLI (`dsh plugin --profile <name>`,
+ * app-boot resolveProfileDir) will touch for the configured profile name.
+ * Directory semantics stay mirrored on the host layout `$DSH_HOME/profiles/<name>`;
+ * the name itself must be bare (see plans.isValidProfileName).
+ */
+declare function cliProfileDir(config: PluginCenterConfig): string;
+/**
+ * The profile DIRECTORY backing hub-side file operations (snapshot, backup,
+ * restore). This is the directory key of the CP-1 split; the CLI surface
+ * takes only the bare profile NAME (`config.defaultProfile`).
+ */
 declare function resolveProfileDir(config: PluginCenterConfig): string;
 declare function normalizeConfig(raw?: Record<string, unknown>): PluginCenterConfig;
 /** Locate the catalog seed shipped inside this package (src or built lib). */
@@ -373,7 +416,16 @@ declare class PluginCenterServices {
   private readonly identity;
   private catalogCache;
   constructor(configRaw: Record<string, unknown>, ports?: EnginePorts, catalogTtlMs?: number, depsOverride?: Partial<EngineDeps>);
-  /** Stage a plan for a catalog entry; returns the plan id and its phrase. */
+  /**
+   * Stage a plan for a catalog entry; returns the plan id and its phrase.
+   *
+   * CP-1 discipline: the CLI command is built with the bare profile NAME
+   * (`config.defaultProfile`, validated downstream), while snapshot and
+   * rollback key on the resolved profile DIRECTORY. A `profileDir` override
+   * that diverges from the directory the official CLI would resolve for that
+   * name is refused at staging time — otherwise the backup and the mutation
+   * would target different profiles and rollback could not be trusted.
+   */
   stagePlan(action: PlanAction, entryId: string): Promise<CpResult<{
     planId: string;
     phrase: string;
@@ -584,5 +636,5 @@ declare function decideAction(input: {
   nowMs: number;
 }): GuardianAction;
 //#endregion
-export { API_PREFIX, type AuditEvent, type AuditOutcome, type CandidateEntry, type CatalogEntry, type CatalogLoadInput, type CompatLevel, CpError, CpErrorCode, type CpResult, type EngineDeps, type EnginePorts, type EvidenceLevel, type GuardianAction, type GuardianConfig, type GuardianStatus, INTENT_HEADER, type InstallPlan, type LifecycleConfig, LifecycleEngine, type LoadedCatalog, PLUGIN_NAME, PROFILE_FILES, type PlanAction, type PlanState, PlanStore, type PluginCenterConfig, PluginCenterServices, type ProbeVerdict, ROUTES, RestartBudget, type RouterRequest, type RouterResponse, type RuntimeIdentity, apply, apply as cordisApply, apply as default, assertSafeUrl, buildInstallCmd, buildNpmAddCmd, buildRemoveCmd, bundledSeedPath, confirmationPhrase, name as cordisName, name, cpErr, cpOk, createPlan, createRuntimeIdentity, decideAction, detectLifecycleScripts, guardianDir, handleApiRequest, inject, isHostAllowed, isInsideRoot, isSensitiveValue, isValidCommit, loadCatalog, nodePorts, normalizeConfig, normalizePluginId, paginate, pidPath, redactRecord, redactValue, resolveDataRoot, resolveProfileDir, safeFetch, searchEntries, serveRequest, sortEntries, startGuardian, statusPath, stopGuardian, toCpResult, validateCatalogEntry };
+export { API_PREFIX, type AuditEvent, type AuditOutcome, type CandidateEntry, type CatalogEntry, type CatalogLoadInput, type CompatLevel, CpError, CpErrorCode, type CpResult, type EngineDeps, type EnginePorts, type EvidenceLevel, type GuardianAction, type GuardianConfig, type GuardianStatus, INTENT_HEADER, type InstallPlan, type LifecycleConfig, LifecycleEngine, type LoadedCatalog, PLUGIN_NAME, PROFILE_FILES, type PlanAction, type PlanState, PlanStore, type PluginCenterConfig, PluginCenterServices, type ProbeVerdict, ROUTES, RestartBudget, type RouterRequest, type RouterResponse, type RuntimeIdentity, apply, apply as cordisApply, apply as default, assertSafeUrl, buildInstallCmd, buildNpmAddCmd, buildRemoveCmd, bundledSeedPath, cliProfileDir, confirmationPhrase, name as cordisName, name, cpErr, cpOk, createPlan, createRuntimeIdentity, decideAction, detectLifecycleScripts, guardianDir, handleApiRequest, inject, isHostAllowed, isInsideRoot, isSensitiveValue, isValidCommit, isValidProfileName, loadCatalog, nodePorts, normalizeConfig, normalizePluginId, paginate, pidPath, redactRecord, redactValue, resolveDataRoot, resolveProfileDir, safeFetch, searchEntries, serveRequest, sortEntries, startGuardian, statusPath, stopGuardian, toCpResult, validateCatalogEntry };
 //# sourceMappingURL=index.d.ts.map

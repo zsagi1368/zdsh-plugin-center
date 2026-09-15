@@ -13,6 +13,7 @@ export {
   PLUGIN_NAME,
   PluginCenterServices,
   bundledSeedPath,
+  cliProfileDir,
   normalizeConfig,
   resolveDataRoot,
   resolveProfileDir,
@@ -20,7 +21,13 @@ export {
 export type { PluginCenterConfig, RuntimeIdentity } from './host/services.js'
 export { API_PREFIX, handleApiRequest, INTENT_HEADER, ROUTES } from './host/api.js'
 export type { RouterRequest, RouterResponse } from './host/api.js'
-export { CpError, confirmationPhrase, createPlan, PlanStore } from './host/plans.js'
+export {
+  CpError,
+  confirmationPhrase,
+  createPlan,
+  isValidProfileName,
+  PlanStore,
+} from './host/plans.js'
 export type { InstallPlan, PlanAction } from './host/plans.js'
 export { isValidCommit, paginate, sortEntries, validateCatalogEntry } from './shared/catalog.js'
 export type { CatalogEntry } from './shared/catalog.js'

@@ -61,7 +61,9 @@ interface Harness {
 function startHarness(): Promise<Harness> {
   return new Promise((resolvePromise, rejectPromise) => {
     const root = mkdtempSync(join(tmpdir(), 'pc-e2e-'));
-    const profileDir = join(root, 'profile');
+    // Host profile layout: the CLI (and the fixture) resolve `--profile web`
+    // as $FAKE_DSH_HOME/profiles/web — the hub hands it the bare name (CP-1).
+    const profileDir = join(root, 'profiles', 'web');
     const dataRoot = join(root, 'data');
     mkdirSync(profileDir, { recursive: true });
     writeFileSync(join(profileDir, 'package.json'), '{\n  "dependencies": {}\n}\n', 'utf8');
@@ -85,7 +87,11 @@ function startHarness(): Promise<Harness> {
           return new Promise((resolveRun, rejectRun) => {
             const child = spawn(process.execPath, [FIXTURE, ...spec.args], {
               cwd: root,
-              env: { ...process.env, FAKE_DSH_MODE: failRef.current ? 'fail' : '' },
+              env: {
+                ...process.env,
+                FAKE_DSH_HOME: root,
+                FAKE_DSH_MODE: failRef.current ? 'fail' : '',
+              },
               shell: false,
               windowsHide: true,
             });
@@ -104,7 +110,7 @@ function startHarness(): Promise<Harness> {
     const services = new PluginCenterServices(
       {
         defaultProfile: 'web',
-        profileDir,
+        dshHome: root,
         dataRoot,
         catalogSeedPath: seedPath,
         remoteCatalogUrl: null,
@@ -277,9 +283,12 @@ describe('closed loop over real HTTP and child processes', () => {
     expect(restoreStaged.status).toBe(200);
     const { restoreId, code } = restoreStaged.payload as { restoreId: string; code: string };
 
+    // deterministic wrong code: flip the last hex char to a value it cannot
+    // already have (the old `${slice(0,-1)}0` collided whenever the code
+    // happened to end in '0' — a 1/16 flake that consumed the one-shot code).
     const wrong = await api('POST', '/api2/zdsh-plugin-center/backups/restore/apply', {
       restoreId,
-      code: `${code.slice(0, -1)}0`,
+      code: `${code.slice(0, -1)}${code.endsWith('0') ? '1' : '0'}`,
     });
     expect(wrong.status).toBe(400);
 

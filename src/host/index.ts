@@ -48,6 +48,7 @@ export {
 export {
   createPlan,
   confirmationPhrase,
+  isValidProfileName,
   PlanStore,
   CpError,
   type InstallPlan,
@@ -58,6 +59,7 @@ export {
   PluginCenterServices,
   normalizeConfig,
   resolveDataRoot,
+  cliProfileDir,
   resolveProfileDir,
   bundledSeedPath,
   createRuntimeIdentity,

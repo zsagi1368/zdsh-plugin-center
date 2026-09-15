@@ -27,9 +27,14 @@ function entry(id: string, commit: string): unknown {
   };
 }
 
-function makeServices(options: { mutationsEnabled?: boolean; failCommand?: boolean } = {}): {
+function makeServices(options: {
+  mutationsEnabled?: boolean;
+  failCommand?: boolean;
+  divergentProfileDir?: boolean;
+} = {}): {
   services: PluginCenterServices;
   commands: CommandSpec[];
+  profileDir: string;
 } {
   const root = mkdtempSync(join(tmpdir(), 'pc-api-'));
   const seedPath = join(root, 'seed.json');
@@ -44,6 +49,12 @@ function makeServices(options: { mutationsEnabled?: boolean; failCommand?: boole
   );
   const real = nodePorts();
   const commands: CommandSpec[] = [];
+  // Host profile layout: the CLI resolves `--profile web` under dshHome.
+  const profileDir = join(root, 'profiles', 'web');
+  real.fs.mkdirDeep(profileDir);
+  for (const name of ['package.json', 'pnpm-workspace.yaml', 'cordis.patch.yml']) {
+    writeFileSync(join(profileDir, name), `orig\n`, 'utf8');
+  }
   const ports: EnginePorts = {
     fs: real.fs,
     clock: real.clock,
@@ -52,20 +63,16 @@ function makeServices(options: { mutationsEnabled?: boolean; failCommand?: boole
       async run(spec) {
         commands.push(spec);
         if (options.failCommand) return { code: 1, stdout: '', stderr: 'nope' };
-        writeFileSync(join(root, 'profile', 'package.json'), '{"touched":true}\n', 'utf8');
+        writeFileSync(join(profileDir, 'package.json'), '{"touched":true}\n', 'utf8');
         return { code: 0, stdout: 'ok', stderr: '' };
       },
     },
   };
-  const profileDir = join(root, 'profile');
-  real.fs.mkdirDeep(profileDir);
-  for (const name of ['package.json', 'pnpm-workspace.yaml', 'cordis.patch.yml']) {
-    writeFileSync(join(profileDir, name), `orig\n`, 'utf8');
-  }
   const services = new PluginCenterServices(
     {
       defaultProfile: 'web',
-      profileDir,
+      dshHome: root,
+      ...(options.divergentProfileDir ? { profileDir: join(root, 'elsewhere') } : {}),
       dataRoot: join(root, 'data'),
       catalogSeedPath: seedPath,
       remoteCatalogUrl: null,
@@ -73,7 +80,7 @@ function makeServices(options: { mutationsEnabled?: boolean; failCommand?: boole
     },
     ports,
   );
-  return { services, commands };
+  return { services, commands, profileDir };
 }
 
 describe('plugin center HTTP surface', () => {
@@ -160,7 +167,20 @@ describe('plugin center HTTP surface', () => {
     expect(applied.status).toBe(200);
     expect((applied.payload as { state: string }).state).toBe('restart-pending');
     expect(commands).toHaveLength(1);
+    expect((commands[0] as CommandSpec).args.slice(0, 3)).toEqual(['plugin', '--profile', 'web']);
     expect((commands[0] as CommandSpec).args.at(-1)).toBe(`git+https://github.com/owner/alpha.git#${COMMIT_A}`);
+  });
+
+  it('refuses to stage when the profileDir override diverges from the CLI-resolved directory (CP-1)', async () => {
+    const { services } = makeServices({ divergentProfileDir: true });
+    const staged = await handleApiRequest(services, {
+      method: 'POST',
+      path: ROUTES.stagePlan,
+      headers: { host: '127.0.0.1', [INTENT_HEADER]: 'zdsh-plugin-center' },
+      body: { action: 'install', entryId: 'owner/alpha' },
+    });
+    expect(staged.status).toBe(400);
+    expect((staged.payload as { error: { message: string } }).error.message).toContain('profileDir');
   });
 
   it('exposes runtime identity and 404s unknown routes', async () => {

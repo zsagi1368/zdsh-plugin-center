@@ -43,9 +43,16 @@ export interface EngineDeps {
   auditSink?: (line: string) => void
 }
 
-/** Pure command builders so tests can pin exact shapes without spawning. */
+/**
+ * Pure command builders so tests can pin exact shapes without spawning.
+ *
+ * `profileName` is the bare profile NAME, not a directory: the official CLI
+ * resolves `--profile <name>` itself and rejects any value containing a path
+ * separator (app-boot resolveProfileDir — CP-1). The directory lives on the
+ * plan as `profileDir` and is used only for file-level operations.
+ */
 export function buildInstallCmd(
-  profile: string,
+  profileName: string,
   owner: string,
   repo: string,
   commit: string,
@@ -55,19 +62,19 @@ export function buildInstallCmd(
     args: [
       'plugin',
       '--profile',
-      profile,
+      profileName,
       'add',
       `git+https://github.com/${owner}/${repo}.git#${commit}`,
     ],
   }
 }
 
-export function buildNpmAddCmd(profile: string, pkgName: string, version: string): { cmd: string; args: string[] } {
-  return { cmd: 'dsh', args: ['plugin', '--profile', profile, 'add', `${pkgName}@${version}`] }
+export function buildNpmAddCmd(profileName: string, pkgName: string, version: string): { cmd: string; args: string[] } {
+  return { cmd: 'dsh', args: ['plugin', '--profile', profileName, 'add', `${pkgName}@${version}`] }
 }
 
-export function buildRemoveCmd(profile: string, pkgName: string): { cmd: string; args: string[] } {
-  return { cmd: 'dsh', args: ['plugin', '--profile', profile, 'remove', pkgName] }
+export function buildRemoveCmd(profileName: string, pkgName: string): { cmd: string; args: string[] } {
+  return { cmd: 'dsh', args: ['plugin', '--profile', profileName, 'remove', pkgName] }
 }
 
 /** List lifecycle scripts a package manifest would run on install. */
@@ -110,11 +117,15 @@ export class LifecycleEngine {
   /**
    * Build and register a plan. `targetManifest` (when the registry supplied
    * the package manifest) runs the lifecycle-script gate before staging.
+   *
+   * `profileName` / `profileDir` carry the two CLI-vs-directory profile
+   * layers (CP-1); see {@link createPlan}.
    */
   buildPlan(
     entry: Entry,
     action: PlanAction,
-    profile: string,
+    profileName: string,
+    profileDir: string,
     targetManifest?: Record<string, unknown>,
   ): CpResult<{ plan: InstallPlan; phrase: string }> {
     try {
@@ -130,7 +141,7 @@ export class LifecycleEngine {
           )
         }
       }
-      const plan = createPlan(entry, action, profile)
+      const plan = createPlan(entry, action, profileName, profileDir)
       this.plans.add(plan)
       this.states.set(plan.planId, 'planned')
       this.audit({
@@ -192,7 +203,9 @@ export class LifecycleEngine {
     this.states.set(planId, 'executing')
     let backup: BackupRecord | null = null
     try {
-      const before = this.snapshotProfile(plan.profile)
+      // File-level operations key on the profile DIRECTORY (CP-1 split);
+      // only the spawned CLI takes the bare name.
+      const before = this.snapshotProfile(plan.profileDir)
 
       // backup every existing profile file
       const dir = ensureNoReparse(
