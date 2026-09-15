@@ -8,13 +8,23 @@
  */
 import { useEffect, useState, type ChangeEvent, type KeyboardEvent, type ReactNode } from 'react'
 import { pluginCenterStyles } from './styles.js'
+import {
+  loadPreinstallView,
+  type PreinstallView,
+  type PreinstallViewRow,
+  type RemoteHolderLike,
+} from './preinstall.js'
 
 export const PLUGIN_CENTER_SLOT_ID = 'zdsh-plugin-center'
 export const PLUGIN_CENTER_SLOT_ORDER = 30
+/** Factory-preinstall section (DESIGN §8-ADJ-1 case B): standalone and read-only. */
+export const PREINSTALL_SLOT_ID = 'zdsh-plugin-center-preinstall'
+export const PREINSTALL_SLOT_ORDER = 31
 export const INTENT_HEADER = 'x-zdsh-pc-intent'
 const API = '/api2/zdsh-plugin-center'
 
-export const inject = ['slots']
+/** ADJ-2 case C: the client reaches remote.pluginGovernance directly. */
+export const inject = ['slots', 'remote', 'remote.pluginGovernance']
 
 interface SlotsLike {
   inject(name: string, mount: () => (() => void)): void
@@ -27,6 +37,8 @@ interface SlotsLike {
 export interface ClientContext {
   effect(mount: () => (() => void), description?: string): void
   slots: SlotsLike
+  /** Present when the host provides the generated remotes client; the factory section hides without it. */
+  remote?: RemoteHolderLike
 }
 
 // ------------------------------------------------------------------ data types
@@ -104,6 +116,15 @@ const messages = {
     confirmRestore: (name: string): string =>
       `恢复备份 ${name}？请输入确认码继续：`,
     uninstall: '卸载',
+    preinstallHeading: '出厂组件',
+    preinstallBadgeInstalled: '出厂已装',
+    preinstallBadgeFailed: '出厂失败',
+    preinstallBadgeUninstalled: '已被卸载（不会重装）',
+    preinstallMountMounted: '已装载',
+    preinstallMountFailed: '装载失败',
+    preinstallMountSkipped: '出厂未激活',
+    preinstallMountUnknown: '装载状态未知',
+    preinstallEmpty: '当前宿主没有出厂预装组件。',
     pageInfo: (a: number, b: number, c: number): string =>
       `第 ${String(a)} / ${String(b)} 页 · 共 ${String(c)} 条`,
     sourceOf: (entry: EntryView): string =>
@@ -147,6 +168,15 @@ const messages = {
     confirmRestore: (name: string): string =>
       `Restore backup ${name}? Type the confirmation code to continue:`,
     uninstall: 'Uninstall',
+    preinstallHeading: 'Factory components',
+    preinstallBadgeInstalled: 'Preinstalled',
+    preinstallBadgeFailed: 'Install failed',
+    preinstallBadgeUninstalled: 'Uninstalled (will not return)',
+    preinstallMountMounted: 'Mounted',
+    preinstallMountFailed: 'Mount failed',
+    preinstallMountSkipped: 'Off at factory',
+    preinstallMountUnknown: 'Mount state unknown',
+    preinstallEmpty: 'This host has no factory-preinstalled components.',
     pageInfo: (a: number, b: number, c: number): string =>
       `Page ${String(a)} / ${String(b)} · ${String(c)} entries`,
     sourceOf: (entry: EntryView): string =>
@@ -622,6 +652,86 @@ function ConfirmDialog(props: {
   )
 }
 
+/** Badge copy for one factory-view row, per locale (exported for the spec). */
+export function preinstallBadgeLabel(
+  row: PreinstallViewRow,
+  locale: Locale,
+): string {
+  const t = locale === 'zh' ? messages.zh : messages.en
+  if (row.badge === 'userUninstalled') return t.preinstallBadgeUninstalled
+  if (row.badge === 'failed') return t.preinstallBadgeFailed
+  return t.preinstallBadgeInstalled
+}
+
+/** Mount-dimension label (§9.4): an admitted artifact can still have failed to load. */
+export function preinstallMountLabel(
+  row: PreinstallViewRow,
+  locale: Locale,
+): string {
+  const t = locale === 'zh' ? messages.zh : messages.en
+  if (row.mount === 'mounted') return t.preinstallMountMounted
+  if (row.mount === 'failed') return t.preinstallMountFailed
+  if (row.mount === 'skipped') return t.preinstallMountSkipped
+  return t.preinstallMountUnknown
+}
+
+/**
+ * The factory-preinstall section (ADJ-1 case B). Read-only, standalone;
+ * under the ADJ-2 fail-safe it renders NOTHING while data is loading or on
+ * any fetch failure — it can never red-screen, and the market section is a
+ * separate slot that never reads this one.
+ */
+export function PreinstallSection(props: {
+  locale?: Locale
+  remote?: RemoteHolderLike
+}): ReactNode {
+  const locale: Locale = props.locale ?? 'zh'
+  const t = messages[locale]
+  const [view, setView] = useState<PreinstallView | null>(null)
+  useEffect(() => {
+    let alive = true
+    loadPreinstallView(props.remote)
+      .then((next) => {
+        if (alive) setView(next)
+      })
+      .catch(() => {
+        // loadPreinstallView never throws; belt against future edits.
+        if (alive) setView(null)
+      })
+    return () => {
+      alive = false
+    }
+  }, [props.remote])
+  if (view === null) return null
+  return (
+    <div className="zdsh-pc">
+      <div className="zdsh-pc-note">{t.preinstallHeading}</div>
+      {view.rows.length === 0 ? (
+        <div className="zdsh-pc-note">{t.preinstallEmpty}</div>
+      ) : (
+        view.rows.map((row) => (
+          <div className="zdsh-pc-audit-row" key={row.seedId}>
+            <span>{row.displayName}</span>
+            <span
+              className={
+                row.badge === 'preinstalled'
+                  ? 'zdsh-pc-badge zdsh-pc-badge-good'
+                  : row.badge === 'failed'
+                    ? 'zdsh-pc-badge zdsh-pc-badge-warn'
+                    : 'zdsh-pc-badge zdsh-pc-badge-dim'
+              }
+            >
+              {preinstallBadgeLabel(row, locale)}
+            </span>
+            <span>{preinstallMountLabel(row, locale)}</span>
+            <span>{row.badge === 'failed' ? (row.reason ?? '') : ''}</span>
+          </div>
+        ))
+      )}
+    </div>
+  )
+}
+
 /** Register the plugin center as its own settings section (order 30). */
 export function apply(ctx: ClientContext): void {
   ctx.effect(
@@ -635,6 +745,19 @@ export function apply(ctx: ClientContext): void {
             label: messages.zh.brand,
           },
           () => <PluginCenterApp locale="zh" />,
+        ),
+      )
+      // Standalone factory-preinstall section (ADJ-1 B): hidden by its own
+      // fail-safe when the governance remote face is absent or unhappy.
+      ctx.slots.inject('settings.section', () =>
+        ctx.slots.register(
+          {
+            name: 'settings.section',
+            id: PREINSTALL_SLOT_ID,
+            order: PREINSTALL_SLOT_ORDER,
+            label: messages.zh.preinstallHeading,
+          },
+          () => <PreinstallSection locale="zh" remote={ctx.remote} />,
         ),
       )
       return () => undefined
