@@ -135,12 +135,26 @@ bounded restarts) and accepted residual risks are documented in
 pnpm install
 pnpm lint        # tsc --noEmit, strict
 pnpm build       # tsdown: host ESM + client loader bundle + watchdog entry
-pnpm test        # vitest: unit + contract + closed-loop integration suites
+pnpm test        # vitest default gate: unit + closed-loop integration (CI runs this)
+pnpm test:contract   # true-host contract specs (needs the zDSH-main sibling; not in CI default)
 ```
 
 The integration suite boots a real HTTP server and drives a real child-process
 CLI stand-in against real temp profile files. CI runs the full gate on both
 ubuntu-latest and windows-latest.
+
+The launcher-profile contract spec
+(`tests/integration/launcher-profile-contract.spec.ts`) pins this hub's profile
+mirror against the **real** mainline function
+(`zDSH-main/packages/boot/app-boot/src/profile.ts`) and fails loud when that
+sibling checkout is absent. CI runners do not carry zDSH-main, so the file is
+excluded from `pnpm test`; run it explicitly from a workspace that has the
+mainline clone as the sibling of zDSH-plugins:
+
+```bash
+pnpm test:contract
+# equivalently: vitest run --config vitest.contract.config.ts
+```
 
 Agent-facing conventions live in [AGENTS.md](AGENTS.md).
 

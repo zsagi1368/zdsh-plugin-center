@@ -119,11 +119,23 @@ dsh plugin --profile web add 'git+https://github.com/zsagi1368/zdsh-plugin-cente
 pnpm install
 pnpm lint        # tsc --noEmit，strict
 pnpm build       # tsdown：host ESM + client 加载器包 + 看门狗入口
-pnpm test        # vitest：单元 + 契约 + 闭环集成套件
+pnpm test        # vitest 默认门禁：单元 + 闭环集成（CI 跑这一条）
+pnpm test:contract   # 真宿主契约例（需要 zDSH-main 兄弟目录；不在 CI 默认面）
 ```
 
 集成套件会启动真实 HTTP 服务、以真实子进程驱动 CLI 替身、作用于真实临时
 profile 文件。CI 在 ubuntu-latest 与 windows-latest 双跑道跑完整门禁。
+
+launcher-profile 契约用例（`tests/integration/launcher-profile-contract.spec.ts`）
+直连主仓真实函数（`zDSH-main/packages/boot/app-boot/src/profile.ts`）对拍本 hub 的
+profile 镜像，缺主仓即 fail-loud（诚实红灯，绝不静默 skip）。CI 跑道不带
+zDSH-main，该文件已从 `pnpm test` 默认面排除；在主仓与 zDSH-plugins 互为兄弟目录
+的工作区里显式跑：
+
+```bash
+pnpm test:contract
+# 等价写法：vitest run --config vitest.contract.config.ts
+```
 
 面向开发代理的仓库守则见 [AGENTS.md](AGENTS.md)。
 

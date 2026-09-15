@@ -18,7 +18,7 @@
 - 单 npm 包 `zdsh-plugin-center`；ESM；TypeScript strict；Node >=22.13。
 - 目录模块化：`src/shared`（类型/错误码/结果信封）、`src/host`（Cordis 插件 + HTTP 路由 + 事务引擎 + 守护助手）、`src/client`（React 设置页 UI）；对应测试 `tests/{shared,host,client}`。
 - 构建产物 `lib/` **入库提交**（git 直装可用），发布前 `pnpm build` 必须刷新。
-- 测试命令：`pnpm test`（vitest run）；类型门：`pnpm lint`（tsc --noEmit）；构建：`pnpm build`。三者全绿才算里程碑完成。
+- 测试命令：`pnpm test`（vitest run，**默认排除真宿主契约例**，CI 双矩阵可跑）；契约例 import 主仓兄弟目录 `zDSH-main/packages/boot/app-boot/src/profile.ts`、缺主仓 fail-loud，需显式跑：`pnpm test:contract`（= `vitest run --config vitest.contract.config.ts`）；类型门：`pnpm lint`（tsc --noEmit）；构建：`pnpm build`。门禁全绿才算里程碑完成（本地有 zDSH-main 时含 test:contract）。
 - client 测试文件头部加 `// @vitest-environment jsdom` 注释（需要 jsdom 时）——若缺依赖先在 devDependencies 补 `jsdom` 再用。
 - Windows 是一等公民目标平台：路径拼接用 path 模块；spawn 必须 `shell:true`（.cmd shim）；symlink 一律 junction 语义；跨盘 relative() 会退化绝对路径，包含关系校验必须同时检查 `!path.isAbsolute(rel)`。
 - 出站网络抓取必须经 `src/shared/ssrc-guard`：仅 http/https；发请求前校验 host，拒绝 localhost、环回（127.0.0.0/8、::1）、私有（10/172.16–12/192.168、169.254、CGNAT 100.64/10）、保留与组播地址；IPv4-mapped IPv6（::ffff:x.y.z.w）先解包再判；重定向逐跳复检。

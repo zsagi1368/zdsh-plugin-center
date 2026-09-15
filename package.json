@@ -24,6 +24,7 @@
     "build": "tsdown",
     "lint": "tsc --noEmit",
     "test": "vitest run",
+    "test:contract": "vitest run --config vitest.contract.config.ts",
     "prepack": "pnpm build"
   },
   "dsh": {
