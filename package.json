@@ -28,6 +28,53 @@
     "prepack": "pnpm build"
   },
   "dsh": {
+    "compatible": ">=0.1.5-rc.2 <0.2.0",
+    "autoApprove": true,
+    "capabilities": [
+      {
+        "type": "service",
+        "service": {
+          "name": "dsh-plugin-center/server",
+          "factory": "./lib/index.js",
+          "singleton": true
+        }
+      }
+    ],
+    "sandbox": {
+      "type": "inline",
+      "resources": {
+        "memoryLimitMb": 512,
+        "cpuLimit": 50,
+        "timeoutMs": 300000,
+        "maxOutputBytes": 1000000
+      },
+      "filesystem": {
+        "access": "readwrite",
+        "allowedPaths": [],
+        "deniedPatterns": []
+      },
+      "network": {
+        "access": "external",
+        "allowedHosts": [],
+        "deniedHosts": [],
+        "allowLocal": true
+      },
+      "environment": {
+        "whitelist": [
+          "DSH_BRANCH_HOME"
+        ],
+        "blacklist": [],
+        "clear": false
+      },
+      "process": {
+        "spawn": true,
+        "exec": false,
+        "allowedCommands": [
+          "dsh",
+          "node"
+        ]
+      }
+    },
     "bundle": {
       "patch": "./cordis.patch.yml"
     },
