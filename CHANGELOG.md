@@ -1,4 +1,4 @@
-# Changelog — zdsh-plugin-center
+# Changelog — dsh-plugin-center
 
 All notable changes are documented here. Format follows Keep a Changelog;
 versioning is semver. 中文说明见同文件下半部分。

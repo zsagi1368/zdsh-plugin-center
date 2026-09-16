@@ -1,8 +1,13 @@
 import { defineConfig } from 'tsdown';
 
+// Loader registration id — the host boot graph derives each client row's id
+// from package.json "name" (zDSH-main packages/client/modules: graphRow rows
+// keyed by the located manifest name), and the module system throws if the
+// executed bundle registers under any other id. Keep this string exactly in
+// sync with package.json "name" when the package identity ever changes.
 const loaderBanner =
   'window.__ModuleLoader__.load({\n' +
-  '  id: "zdsh-plugin-center",\n' +
+  '  id: "dsh-plugin-center",\n' +
   '  factory: (require) => {\n' +
   '    var module = { exports: {} };\n' +
   '    var exports = module.exports;\n';

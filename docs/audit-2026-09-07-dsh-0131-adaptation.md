@@ -1,4 +1,4 @@
-# 审计：zdsh-plugin-center 对 dsh 0.1.3 的适配结论（Tier 0）
+# 审计：dsh-plugin-center（审计时包名 `zdsh-plugin-center`，α 改名前）对 dsh 0.1.3 的适配结论（Tier 0）
 
 - 日期：2026-09-07
 - 任务卡：zDSH-docs/Plan/campaigns/2026-09-07-plugins-0131-adaptation/tasks/R2-plugin-center.md

@@ -1,6 +1,6 @@
-# AGENTS.md — zdsh-plugin-center 开发守则
+# AGENTS.md — dsh-plugin-center 开发守则
 
-你是本仓（`zdsh-plugin-center`，zDSH 插件中心）的开发/测试/文档代理。本仓是**全新独立插件**：所有代码、文案与结构均为原创。
+你是本仓（npm 包 `dsh-plugin-center`，zDSH 插件中心；GitHub 仓名 `zdsh-plugin-center` 为别名、不改，P-9 先例）的开发/测试/文档代理。本仓是**全新独立插件**：所有代码、文案与结构均为原创。
 
 ## 硬性红线
 
@@ -15,7 +15,7 @@
 
 ## 技术约定
 
-- 单 npm 包 `zdsh-plugin-center`；ESM；TypeScript strict；Node >=22.13。
+- 单 npm 包 `dsh-plugin-center`；ESM；TypeScript strict；Node >=22.13。（GitHub 仓名 `zdsh-plugin-center` 是别名不动；`/api2/zdsh-plugin-center` 路由前缀、settings 槽 id、`~/.zdsh-plugin-center` 数据目录为既有功能串，不随包名改）
 - 目录模块化：`src/shared`（类型/错误码/结果信封）、`src/host`（Cordis 插件 + HTTP 路由 + 事务引擎 + 守护助手）、`src/client`（React 设置页 UI）；对应测试 `tests/{shared,host,client}`。
 - 构建产物 `lib/` **入库提交**（git 直装可用），发布前 `pnpm build` 必须刷新。
 - 测试命令：`pnpm test`（vitest run，**默认排除真宿主契约例**，CI 双矩阵可跑）；契约例 import 主仓兄弟目录 `zDSH-main/packages/boot/app-boot/src/profile.ts`、缺主仓 fail-loud，需显式跑：`pnpm test:contract`（= `vitest run --config vitest.contract.config.ts`）；类型门：`pnpm lint`（tsc --noEmit）；构建：`pnpm build`。门禁全绿才算里程碑完成（本地有 zDSH-main 时含 test:contract）。

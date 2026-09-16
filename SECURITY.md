@@ -1,4 +1,4 @@
-# Security — zdsh-plugin-center
+# Security — dsh-plugin-center
 
 This document states the trust boundaries, the guarantees the plugin tries to
 uphold, and the residual risks users accept. 中文要点见文末。

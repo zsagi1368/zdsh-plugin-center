@@ -1,4 +1,4 @@
-# Configuration — zdsh-plugin-center
+# Configuration — dsh-plugin-center
 
 All options live in the Cordis plugin config, i.e. the plugin's entry inside
 the profile composition (what `cordis.patch.yml` inserts). Defaults are safe:
