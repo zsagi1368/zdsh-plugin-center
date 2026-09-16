@@ -4,4 +4,4 @@
 # the id used in src/host/index.ts service registration and the client slot id).
 insert:
   - id: zdsh-plugin-center
-    name: zdsh-plugin-center
+    name: dsh-plugin-center
