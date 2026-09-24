@@ -212,26 +212,180 @@ export interface SafeFetchOptions {
   timeoutMs?: number | undefined
   maxRedirects?: number | undefined
   headers?: Record<string, string> | undefined
+  /**
+   * Response body byte cap (F2, ruling-approved default 2 MiB). Oversized
+   * bodies abort the connection and return an explicit error — a truncated
+   * document is never handed to the digest comparison downstream.
+   */
+  maxBytes?: number | undefined
 }
+
+/**
+ * Default response body cap for the catalog/sidecar channel: sidecars are
+ * hundred-byte scale, catalogs tens-of-KB scale, so 2 MiB leaves orders of
+ * headroom while bounding the unbounded-`text()` surface (SECURITY-B4-D1a F2②,
+ * patterns ②「有界响应体」/⑤「失败/超大响应路径单审」).
+ */
+const MAX_RESPONSE_BYTES = 2 * 1024 * 1024
 
 const SENSITIVE_REDIRECT_HEADERS =
   /^(authorization|cookie|cookie2|proxy-authorization|x-zdsh-pc-intent)$/i
 
 /**
+ * DNS resolution gate (F2, SECURITY-B4-D1a): classify EVERY address the
+ * hostname resolves to before connecting — a public-looking hostname that
+ * resolves to loopback/private/link-local ranges is refused, closing the
+ * literal-only-judgment bypass. Local implementation of the webstack
+ * `safety/ssrf.ts` G2 pattern (lookup(all:true) → per-address classification
+ * → DNS failure fail-closed), reusing this module's own isHostAllowed/judgeIpv4
+ * family for the classification. DNS errors normalize to `source_unreachable`
+ * (no new error code: CpErrorCode is contract-export surface).
+ *
+ * Documented residual (zdsh-security-patterns ②, webstack ssrf.ts header same
+ * shape): global fetch re-resolves when it connects, so a short-TTL rebinding
+ * answer differing between this gate and the connection remains a TOCTOU
+ * residual — accepted risk per the family standard (per-hop re-validation is
+ * the backstop; connection pinning via a lookup hook would require an undici
+ * dependency = supply-chain surface change, out of card scope).
+ */
+async function assertHostResolvesAllowed(hostname: string): Promise<CpResult<null>> {
+  // Lazy import keeps this module importable in non-node bundles (client face).
+  const { lookup } = await import('node:dns/promises')
+  let addresses: Array<{ address: string; family: number }>
+  try {
+    addresses = await lookup(hostname, { all: true })
+  } catch (error) {
+    // Fail-closed: a DNS failure is never guessed around or let through.
+    return {
+      ok: false,
+      error: {
+        code: CpErrorCode.sourceUnreachable,
+        message: `dns resolution failed for host: ${hostname} (${error instanceof Error ? error.message : 'unknown error'})`,
+      },
+    }
+  }
+  if (addresses.length === 0) {
+    return {
+      ok: false,
+      error: {
+        code: CpErrorCode.sourceUnreachable,
+        message: `dns resolution returned no addresses for host: ${hostname}`,
+      },
+    }
+  }
+  for (const entry of addresses) {
+    if (!isHostAllowed(entry.address)) {
+      return {
+        ok: false,
+        error: {
+          code: CpErrorCode.unsafeUrl,
+          message: `host ${hostname} resolves to a disallowed address: ${entry.address} (family ${entry.family})`,
+        },
+      }
+    }
+  }
+  return { ok: true, data: null }
+}
+
+function bodyTooLarge(maxBytes: number): CpResult<never> {
+  return {
+    ok: false,
+    error: {
+      code: CpErrorCode.sourceUnreachable,
+      message: `response body exceeds ${maxBytes} bytes`,
+    },
+  }
+}
+
+/**
+ * Bounded body reader (G4 pattern, webstack `safety/outbound.ts` readBounded
+ * shape): accumulate at most maxBytes, abort the underlying connection the
+ * moment the bound is crossed and return an explicit error — an oversized
+ * response is a failure, never a truncated success.
+ */
+async function readBodyBounded(
+  response: Response,
+  maxBytes: number,
+  stop: AbortController,
+): Promise<CpResult<string>> {
+  const reader = response.body?.getReader()
+  if (reader === undefined) {
+    // Non-streaming body fallback (polyfill shapes): buffer once, then bound.
+    const buffer = new Uint8Array(await response.arrayBuffer())
+    if (buffer.byteLength > maxBytes) {
+      stop.abort()
+      return bodyTooLarge(maxBytes)
+    }
+    return { ok: true, data: new TextDecoder('utf-8', { fatal: false }).decode(buffer) }
+  }
+  const chunks: Uint8Array[] = []
+  let received = 0
+  try {
+    for (;;) {
+      const { done, value } = await reader.read()
+      if (done) break
+      if (value === undefined) continue
+      received += value.byteLength
+      if (received > maxBytes) {
+        stop.abort() // cut the connection early; do not consume the rest
+        await reader.cancel().catch(() => undefined)
+        return bodyTooLarge(maxBytes)
+      }
+      chunks.push(value)
+    }
+  } finally {
+    try {
+      reader.releaseLock()
+    } catch {
+      // already released by cancel()
+    }
+  }
+  const merged = new Uint8Array(received)
+  let offset = 0
+  for (const chunk of chunks) {
+    merged.set(chunk, offset)
+    offset += chunk.byteLength
+  }
+  return { ok: true, data: new TextDecoder('utf-8', { fatal: false }).decode(merged) }
+}
+
+/**
  * fetch wrapper that re-validates every hop (redirects are followed manually)
  * so a redirect cannot smuggle us onto a private address, and credential
  * headers are stripped the moment we leave the original origin.
+ *
+ * Channel hardening (TC-B4-PC1 F3): this fetch path serves the remote
+ * catalog + sidecar channel, whose integrity credential (a bare sha256
+ * sidecar) only authenticates over TLS — plaintext http: lets a MITM rewrite
+ * catalog and sidecar together. Every hop therefore requires `https:`.
+ * `assertSafeUrl` keeps accepting http: for display-only homepage validation
+ * (catalog data surface untouched).
+ *
+ * Each hop additionally passes the DNS resolution gate (F2) and the response
+ * body is read under a byte bound (default 2 MiB).
  */
 export async function safeFetch(
   rawUrl: string | URL,
   options: SafeFetchOptions = {},
 ): Promise<CpResult<{ status: number; text: string }>> {
   const maxRedirects = options.maxRedirects ?? 3
+  const maxBytes = options.maxBytes ?? MAX_RESPONSE_BYTES
   let current = assertSafeUrl(rawUrl)
   let origin = current.ok ? current.data.origin : ''
   let headers: Record<string, string> = { ...(options.headers ?? {}) }
   for (let hop = 0; hop <= maxRedirects; hop += 1) {
     if (!current.ok) return current
+    if (current.data.protocol !== 'https:') {
+      // F3: the catalog/sidecar fetch channel is https-only on every hop
+      // (an https origin may not downgrade through a redirect either).
+      return {
+        ok: false,
+        error: {
+          code: CpErrorCode.unsafeUrl,
+          message: `protocol not allowed for fetched content: ${current.data.protocol} (https only)`,
+        },
+      }
+    }
     if (current.data.origin !== origin) {
       // Cross-origin hop: credentials must not follow a redirect.
       const sanitized: Record<string, string> = {}
@@ -241,6 +395,9 @@ export async function safeFetch(
       headers = sanitized
       origin = current.data.origin
     }
+    // F2: resolve and classify every address before connecting (fail-closed).
+    const dnsCheck = await assertHostResolvesAllowed(current.data.hostname)
+    if (!dnsCheck.ok) return dnsCheck
     const controller = new AbortController()
     const timer = setTimeout(() => {
       controller.abort()
@@ -262,8 +419,15 @@ export async function safeFetch(
         current = assertSafeUrl(new URL(location, current.data))
         continue
       }
-      const text = await response.text()
-      return { ok: true, data: { status: response.status, text } }
+      // F2: cheap declared-length rejection before reading any bytes.
+      const declaredLength = Number(response.headers.get('content-length'))
+      if (Number.isFinite(declaredLength) && declaredLength > maxBytes) {
+        controller.abort()
+        return bodyTooLarge(maxBytes)
+      }
+      const body = await readBodyBounded(response, maxBytes, controller)
+      if (!body.ok) return body
+      return { ok: true, data: { status: response.status, text: body.data } }
     } catch (error) {
       return {
         ok: false,
