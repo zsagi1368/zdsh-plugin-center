@@ -138,45 +138,43 @@ function removePathSafe(path: string): void {
 }
 
 /**
- * Argument allowlist for shelled commands: catalog-controlled values flow
- * into these argv slots, so anything outside this set is refused before a
- * process is created. Deliberately excludes quotes, ampersands, pipes,
- * redirects, carets, percent (cmd env expansion) and bangs (delayed
- * expansion). Space stays allowed because profile directories legitimately
- * contain spaces — the data layer below independently pins owner/repo/version
- * to a much stricter charset.
+ * Argument allowlist gate — defined in shared/resolve-executable.ts together
+ * with the spawn-carrier planner (the allowlist is the safety premise of the
+ * win32 verbatim carrier); re-exported here to keep the historical import
+ * path stable.
  */
-const SAFE_ARG = /^[A-Za-z0-9_@+=.,:\\/#\- ]+$/
-
-export function assertSafeArgs(args: readonly string[]): void {
-  for (const arg of args) {
-    if (!SAFE_ARG.test(arg)) {
-      throw new Error(`refusing unsafe command argument: ${JSON.stringify(arg.slice(0, 40))}`)
-    }
-  }
-}
+export { assertSafeArgs } from '../shared/resolve-executable.js'
+import { assertSafeArgs, planCommand } from '../shared/resolve-executable.js'
 
 function runViaSpawn(spec: CommandSpec): Promise<{ code: number; stdout: string; stderr: string }> {
   return new Promise((resolvePromise, rejectPromise) => {
     assertSafeArgs([spec.cmd, ...spec.args])
     // Lazy import keeps this module importable in non-node test sandboxes.
-    import('node:child_process').then(({ spawn }) => {
-      // shell:true is mandatory on win32 where npm-family CLIs are .cmd shims;
-      // safety comes from the strict argument allowlist above.
-      const child = spawn(spec.cmd, spec.args, { shell: true, windowsHide: true })
-      let stdout = ''
-      let stderr = ''
-      child.stdout.on('data', (chunk: Buffer) => {
-        stdout += chunk.toString()
-      })
-      child.stderr.on('data', (chunk: Buffer) => {
-        stderr += chunk.toString()
-      })
-      child.on('error', rejectPromise)
-      child.on('close', (code) => {
-        resolvePromise({ code: code ?? -1, stdout, stderr })
-      })
-    }, rejectPromise)
+    // F1 (SECURITY-B4-D1a, ruling 1b): the command name is resolved to an
+    // absolute path (where.exe/which, fail-closed — a resolution failure
+    // rejects this promise with guidance instead of falling back to the bare
+    // name) and the carrier is planned shell-free: real executables spawn
+    // directly, win32 .cmd/.bat shims run through an absolute cmd.exe with
+    // windowsVerbatimArguments. spawn options are always shell:false and the
+    // spawned file is always absolute — see shared/resolve-executable.ts.
+    Promise.all([import('node:child_process'), planCommand(spec.cmd, spec.args)]).then(
+      ([{ spawn }, invocation]) => {
+        const child = spawn(invocation.file, invocation.args, invocation.options)
+        let stdout = ''
+        let stderr = ''
+        child.stdout.on('data', (chunk: Buffer) => {
+          stdout += chunk.toString()
+        })
+        child.stderr.on('data', (chunk: Buffer) => {
+          stderr += chunk.toString()
+        })
+        child.on('error', rejectPromise)
+        child.on('close', (code) => {
+          resolvePromise({ code: code ?? -1, stdout, stderr })
+        })
+      },
+      rejectPromise,
+    )
   })
 }
 

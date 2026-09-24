@@ -12,6 +12,7 @@ import { isAbsolute, join, resolve, sep } from 'node:path'
 import { createHash, randomUUID } from 'node:crypto'
 import type { GuardianConfig, GuardianStatus } from './guardian.js'
 import { decideAction, RestartBudget } from './restart-budget.js'
+import { planCommand } from '../shared/resolve-executable.js'
 
 const LOOPBACK_HOST = '127.0.0.1' // fixed: the watchdog never targets other hosts
 
@@ -95,22 +96,31 @@ interface LaunchSpec {
   args: string[]
 }
 
-/** Boot the host command again as its own detached process (no shell). */
+/**
+ * Boot the host command again as its own detached process.
+ *
+ * F1 (SECURITY-B4-D1a, ruling 1b): never a bare name, never a shell — the
+ * launch command goes through the same absolute-path resolver + carrier
+ * planner as every other spawn in this package. A failed resolution throws
+ * with guidance (fail-closed): the watchdog exits loudly through
+ * autoRunOnImport's catch instead of spawning whatever shadows the name.
+ * launchCommand config semantics (ruling condition 4): a user-configured
+ * absolute path is validated in place, a bare name is resolved through
+ * where.exe/which, a relative path is refused.
+ */
 export async function relaunchHost(launch: LaunchSpec): Promise<number | null> {
-  return import('node:child_process').then(
-    ({ spawn }) => {
-      // Argument-list form straight from the validated config object.
-      const child = spawn(launch.cmd, launch.args, {
-        detached: true,
-        stdio: 'ignore',
-        windowsHide: true,
-        shell: false,
-      })
-      child.unref()
-      return typeof child.pid === 'number' ? child.pid : null
-    },
-    () => null,
-  )
+  const [{ spawn }, invocation] = await Promise.all([
+    import('node:child_process'),
+    planCommand(launch.cmd, launch.args),
+  ])
+  // Argument-list form straight from the validated config object.
+  const child = spawn(invocation.file, invocation.args, {
+    ...invocation.options,
+    detached: true,
+    stdio: 'ignore',
+  })
+  child.unref()
+  return typeof child.pid === 'number' ? child.pid : null
 }
 
 export class Watchdog {
