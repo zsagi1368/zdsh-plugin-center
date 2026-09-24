@@ -13,9 +13,17 @@
  * Red/green record: this spec was first run against the pre-fix code where
  * L1/L2 fail (actual shape: `spawn('dsh', args, { shell: true })`) and
  * L3/L4 fail (bare/relative names reach spawn untouched) — see receipt §4.
+ *
+ * TC-B4-PC2 (D1b FB1 hardening, defense-in-depth) adds the probe-executable
+ * absolutization locks: the resolver's OWN probes (win32 where.exe, POSIX
+ * which) must spawn from absolute paths (%SystemRoot%\System32\where.exe with
+ * a fixed-default last resort; /usr/bin/which-family candidate), all-missing
+ * probes fail-closed BEFORE any spawn, and each leg carries a replicated
+ * bare-name negative control asserting the pre-fix shape is non-absolute —
+ * a regression to `spawnSync('where.exe'|'which', …)` goes red.
  */
 import { EventEmitter } from 'node:events';
-import { chmodSync, mkdirSync, mkdtempSync, writeFileSync } from 'node:fs';
+import { chmodSync, existsSync, mkdirSync, mkdtempSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { win32, posix } from 'node:path';
@@ -60,6 +68,8 @@ import {
   comSpecAbsolute,
   planSpawnInvocation,
   resolveExecutablePath,
+  whereExeAbsolute,
+  whichAbsolute,
 } from '../../src/shared/resolve-executable.js';
 
 const run = (spec: { cmd: string; args: string[] }) => nodePorts().commands.run(spec);
@@ -165,6 +175,18 @@ function fixtureFile(name: string, contents = 'x'): string {
   return file;
 }
 
+/**
+ * A SystemRoot fixture carrying an (inert) System32\where.exe probe body —
+ * TC-B4-PC2: the resolver existence-checks its absolute probe executable, so
+ * a stubbed SystemRoot must look like a real one for the probe leg to run.
+ */
+function systemRootFixture(): string {
+  const root = mkdtempSync(join(tmpdir(), 'pc2-sysroot-'));
+  mkdirSync(join(root, 'System32'), { recursive: true });
+  writeFileSync(join(root, 'System32', 'where.exe'), 'x', 'utf8');
+  return root;
+}
+
 describe('SAFE_ARG × cmd.exe metacharacter coverage (ruling supplement, anti-drift lock)', () => {
   // The verbatim win32 carrier embeds argv in a cmd.exe command line; its
   // safety premise is that SAFE_ARG excludes every cmd metacharacter. If the
@@ -238,22 +260,35 @@ describe('resolveExecutablePath (fail-closed matrix)', () => {
     );
   });
 
-  it('win32: probe cwd is pinned to SystemRoot so the host cwd cannot shadow the lookup', async () => {
+  it('win32: probe executable is the absolute System32 where.exe and cwd stays pinned to SystemRoot (TC-B4-PC2)', async () => {
     stubPlatform('win32');
-    const systemRoot = fixtureFile('systemroot-marker').replace(/systemroot-marker$/, '');
+    const systemRoot = systemRootFixture();
     vi.stubEnv('SystemRoot', systemRoot);
     const resolved = fixtureFile('dsh.cmd');
     h.spawnSyncResult = { status: 0, stdout: `${resolved}\n`, stderr: '' };
     await expect(resolveExecutablePath('dsh')).resolves.toBe(resolved);
     expect(h.spawnSyncCalls.length).toBeGreaterThan(0);
     const probe = h.spawnSyncCalls[h.spawnSyncCalls.length - 1]!;
-    expect(probe.file).toBe('where.exe');
+    // PC2 lock (win32 leg): the probe command is ALWAYS the absolute
+    // %SystemRoot%\System32\where.exe — pre-fix shape was the bare name
+    // (D1b FB1); the exact-match assertion is strictly stronger.
+    expect(probe.file).toBe(join(systemRoot, 'System32', 'where.exe'));
+    expect(isAbsPlatform(probe.file)).toBe(true);
+    // Negative control (replicated pre-fix shape): the bare probe name is
+    // non-absolute, so any regression to `spawnSync('where.exe', …)` is red.
+    expect(isAbsPlatform('where.exe')).toBe(false);
+    expect(probe.file).not.toBe('where.exe');
     expect(probe.args).toEqual(['dsh']);
+    // Belt-and-braces pin kept (card face): the probe cwd stays SystemRoot so
+    // where.exe's own CWD-first target search can never be shadowed.
     expect(probe.options.cwd).toBe(systemRoot);
   });
 
   it('win32: extensionless echoes are skipped and .exe outranks .cmd shims', async () => {
     stubPlatform('win32');
+    // PC2 hermeticity: the stubbed SystemRoot must carry the probe body
+    // (the resolver existence-checks it); rank assertions unchanged.
+    vi.stubEnv('SystemRoot', systemRootFixture());
     const dir = mkdtempSync(join(tmpdir(), 'pc1-rank-'));
     const extensionless = join(dir, 'dsh');
     const shim = join(dir, 'dsh.cmd');
@@ -265,6 +300,103 @@ describe('resolveExecutablePath (fail-closed matrix)', () => {
     // Without the .exe present the shim is the carrier.
     h.spawnSyncResult = { status: 0, stdout: `${extensionless}\n${shim}\n`, stderr: '' };
     await expect(resolveExecutablePath('dsh')).resolves.toBe(shim);
+  });
+});
+
+describe('probe executable absolutization (TC-B4-PC2, D1b FB1 hardening)', () => {
+  it('win32: SystemRoot/WINDIR unset falls back to the fixed absolute C:\\Windows\\System32\\where.exe', async () => {
+    // win32-host gated: on a POSIX FS the fixed default does not exist and
+    // the resolver fail-closes instead (locked by the next test).
+    if (process.platform !== 'win32') return;
+    stubPlatform('win32');
+    vi.stubEnv('SystemRoot', '');
+    vi.stubEnv('WINDIR', '');
+    const resolved = fixtureFile('dsh.cmd');
+    h.spawnSyncResult = { status: 0, stdout: `${resolved}\n`, stderr: '' };
+    await expect(resolveExecutablePath('dsh')).resolves.toBe(resolved);
+    const probe = h.spawnSyncCalls[h.spawnSyncCalls.length - 1]!;
+    expect(probe.file).toBe('C:\\Windows\\System32\\where.exe');
+    expect(isAbsPlatform(probe.file)).toBe(true);
+    // Negative control (replicated pre-fix shape): bare name → red.
+    expect(isAbsPlatform('where.exe')).toBe(false);
+    expect(probe.file).not.toBe('where.exe');
+  });
+
+  it('win32: no absolute where.exe anywhere → fail-closed BEFORE any spawn (probe never bare)', async () => {
+    // POSIX-host gated: on a real Windows box C:\Windows\System32\where.exe
+    // always exists as the last resort, so the throw path is only reachable
+    // here (same gating shape as the comSpecAbsolute fail-closed lock).
+    if (process.platform === 'win32') return;
+    stubPlatform('win32');
+    vi.stubEnv('SystemRoot', '');
+    vi.stubEnv('WINDIR', '');
+    await expect(resolveExecutablePath('dsh')).rejects.toThrow(/no absolute where\.exe probe/i);
+    expect(h.spawnSyncCalls).toHaveLength(0);
+  });
+
+  it('posix: probe executable is an absolute which candidate, never the bare name', async () => {
+    // POSIX-host gated: the candidates are real system paths that cannot be
+    // fixture-created on a Windows host (the next test locks the fail-closed
+    // side of the same function from a win32 host).
+    if (process.platform === 'win32') return;
+    await expect(resolveExecutablePath('dsh')).resolves.toBe(resolvedFixture);
+    const probe = h.spawnSyncCalls[h.spawnSyncCalls.length - 1]!;
+    expect(isAbsPlatform(probe.file)).toBe(true);
+    expect(probe.file).toMatch(/^\/(?:usr\/bin|bin|usr\/local\/bin)\/which$/);
+    // Negative control (replicated pre-fix shape): bare 'which' is
+    // non-absolute — a regression to `spawnSync('which', …)` goes red.
+    expect(isAbsPlatform('which')).toBe(false);
+    expect(probe.file).not.toBe('which');
+  });
+
+  it('posix: no absolute which anywhere → fail-closed BEFORE any spawn (probe never bare)', async () => {
+    // win32-host gated: on a real POSIX box /usr/bin/which (or /bin/which)
+    // exists, so the all-missing throw is only reachable on a Windows FS.
+    if (process.platform !== 'win32') return;
+    stubPlatform('posix' as NodeJS.Platform);
+    await expect(resolveExecutablePath('dsh')).rejects.toThrow(/no absolute which probe/i);
+    expect(h.spawnSyncCalls).toHaveLength(0);
+  });
+});
+
+describe('whereExeAbsolute / whichAbsolute (probe executable resolvers, TC-B4-PC2)', () => {
+  it('whereExeAbsolute: SystemRoot candidate wins; empty/relative roots fall through to WINDIR', () => {
+    const rootA = systemRootFixture();
+    const rootB = systemRootFixture();
+    vi.stubEnv('SystemRoot', rootA);
+    vi.stubEnv('WINDIR', rootB);
+    expect(whereExeAbsolute()).toBe(join(rootA, 'System32', 'where.exe'));
+    vi.stubEnv('SystemRoot', ''); // empty = unset → WINDIR leg
+    expect(whereExeAbsolute()).toBe(join(rootB, 'System32', 'where.exe'));
+    vi.stubEnv('SystemRoot', 'System32'); // relative = refused → WINDIR leg
+    expect(whereExeAbsolute()).toBe(join(rootB, 'System32', 'where.exe'));
+  });
+
+  it('whereExeAbsolute: throws fail-closed when no absolute candidate exists anywhere', () => {
+    // POSIX-host gated: on a real Windows box C:\Windows\System32\where.exe
+    // always exists as the last resort (same gating as the comSpecAbsolute
+    // fail-closed lock).
+    if (process.platform === 'win32') return;
+    vi.stubEnv('SystemRoot', '');
+    vi.stubEnv('WINDIR', '');
+    expect(() => whereExeAbsolute()).toThrow(/no absolute where\.exe probe/i);
+  });
+
+  it('whichAbsolute: returns the first existing candidate (absolute, common-location set)', () => {
+    // POSIX-host gated: the candidates are real system paths.
+    if (process.platform === 'win32') return;
+    const which = whichAbsolute();
+    expect(posix.isAbsolute(which)).toBe(true);
+    const candidates = ['/usr/bin/which', '/bin/which', '/usr/local/bin/which'];
+    expect(candidates).toContain(which);
+    expect(which).toBe(candidates.find((c) => existsSync(c)));
+  });
+
+  it('whichAbsolute: throws fail-closed when no candidate exists (win32 FS)', () => {
+    // win32-host gated: on a real POSIX box /usr/bin/which (or /bin/which)
+    // exists, so the all-missing throw is only reachable on a Windows FS.
+    if (process.platform !== 'win32') return;
+    expect(() => whichAbsolute()).toThrow(/no absolute which probe/i);
   });
 });
 

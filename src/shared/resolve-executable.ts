@@ -7,10 +7,15 @@
  * the real CLI — the SECURITY-B4-D1a F1 [阻断] trigger chain. Every spawn in
  * this package therefore:
  *
- * 1. resolves the command to an ABSOLUTE path — `where.exe` on win32 with
- *    the probe cwd pinned to SystemRoot (so the host's cwd can never shadow
- *    the lookup), `which` on POSIX; a failed resolution is a hard error
- *    (fail-closed: never falls back to the bare name);
+ * 1. resolves the command to an ABSOLUTE path — on win32 the probe is the
+ *    ABSOLUTE `%SystemRoot%\System32\where.exe` (TC-B4-PC2 / D1b FB1
+ *    hardening: the probe executable itself must never re-enter a bare-name
+ *    search — win32 CreateProcess searches the application directory and the
+ *    parent CWD before System32) with the probe cwd additionally pinned to
+ *    SystemRoot as belt-and-braces (so the host's cwd can never shadow the
+ *    target lookup); on POSIX the probe is the ABSOLUTE `/usr/bin/which`-
+ *    family candidate. A failed resolution is a hard error (fail-closed:
+ *    never falls back to the bare name);
  * 2. plans the spawn carrier: a real executable spawns directly with
  *    `shell:false`; a win32 `.cmd`/`.bat` shim (the npm-family CLI form —
  *    spawning a `.cmd` bare with `shell:false` is EINVAL since the
@@ -28,7 +33,10 @@
  * `packages/client/workbench/src/git-runner.ts` `defaultBinaryResolver`
  * (where.exe probe + SystemRoot-pinned cwd + absolute-or-null fail-closed)
  * and `pty-registry.ts` `resolveShell` (ComSpec must be win32-absolute,
- * bare/relative values are refused, SystemRoot fallback).
+ * bare/relative values are refused, SystemRoot fallback). TC-B4-PC2 goes one
+ * step beyond the pattern form: the probe executables themselves are
+ * absolute-or-fail-closed as well (D1b FB1 defense-in-depth), so no spawn in
+ * this module — targets, carriers OR probes — ever takes a bare name.
  */
 import { accessSync, constants, existsSync } from 'node:fs'
 import { join, win32, posix } from 'node:path'
@@ -85,11 +93,58 @@ function firstNonEmptyLine(stdout: string): string | null {
 }
 
 /**
+ * The absolute where.exe probe executable for win32 (TC-B4-PC2, D1b FB1
+ * hardening). The probe itself must never be a bare name: win32 CreateProcess
+ * searches the application directory and the parent CWD BEFORE System32, so a
+ * `where.exe` planted in the host's cwd could win over the real probe — the
+ * registered (mechanism-disproved but defense-in-depth-closed) FB1 residue.
+ * Mirrors comSpecAbsolute's chain form: %SystemRoot%\System32\where.exe →
+ * %WINDIR% same shape → the fixed Windows default — each existence-checked,
+ * fail-closed otherwise (never a bare-name probe).
+ */
+export function whereExeAbsolute(): string {
+  for (const root of [process.env.SystemRoot, process.env.WINDIR]) {
+    if (root !== undefined && root !== '' && win32.isAbsolute(root)) {
+      const candidate = join(root, 'System32', 'where.exe')
+      if (existsSync(candidate)) return candidate
+    }
+  }
+  const lastResort = 'C:\\Windows\\System32\\where.exe'
+  if (existsSync(lastResort)) return lastResort
+  throw new Error(
+    'command resolution failed: no absolute where.exe probe available (SystemRoot/WINDIR unset, relative, or without System32\\where.exe, and the fixed C:\\Windows\\System32\\where.exe is missing) — refusing to resolve through a bare probe name (fail-closed)',
+  )
+}
+
+/** Common install locations of the POSIX `which` utility, best first. */
+const POSIX_WHICH_CANDIDATES = ['/usr/bin/which', '/bin/which', '/usr/local/bin/which'] as const
+
+/**
+ * The absolute `which` probe executable for POSIX (TC-B4-PC2, D1b FB1
+ * hardening — symmetric leg). execvp does not search the parent CWD (unless
+ * PATH contains '.'), so the bare `which` probe was never practically
+ * plantable; this is the defense-in-depth half of the same ruling: identical
+ * absolute-or-fail-closed shape as the win32 probe, leaving zero search-order
+ * reasoning anywhere in this module. Candidates are probed in order and
+ * existence-checked; all missing → fail-closed (never a bare-name probe).
+ */
+export function whichAbsolute(): string {
+  for (const candidate of POSIX_WHICH_CANDIDATES) {
+    if (existsSync(candidate)) return candidate
+  }
+  throw new Error(
+    `command resolution failed: no absolute which probe available (${POSIX_WHICH_CANDIDATES.join(', ')} all missing) — refusing to resolve through a bare probe name (fail-closed)`,
+  )
+}
+
+/**
  * Resolve a command name to an absolute, existing, platform-executable path.
- * Bare names go through where.exe/which (probe cwd pinned to SystemRoot on
- * win32); absolute paths are validated in place; anything else (empty,
- * relative, unresolvable, non-executable form) throws with guidance —
- * fail-closed, never a bare-name fallback.
+ * Bare names go through the platform probe — itself an ABSOLUTE, existence-
+ * checked executable (whereExeAbsolute/whichAbsolute above; the probe cwd
+ * stays pinned to SystemRoot on win32 as belt-and-braces); absolute paths are
+ * validated in place; anything else (empty, relative, unresolvable, non-
+ * executable form, missing probe) throws with guidance — fail-closed, never
+ * a bare-name fallback.
  */
 export async function resolveExecutablePath(name: string): Promise<string> {
   const trimmed = name.trim()
@@ -129,13 +184,19 @@ export async function resolveExecutablePath(name: string): Promise<string> {
   // non-node sandboxes until a spawn is actually planned.
   const { spawnSync } = await import('node:child_process')
   if (isWin32()) {
+    // TC-B4-PC2: the probe executable is resolved (absolute, existence-
+    // checked) BEFORE the try — a missing probe throws its own guidance
+    // instead of being wrapped as a spawn failure.
+    const probeExe = whereExeAbsolute()
     let result: { status: number | null; stdout: string; error?: Error }
     try {
-      result = spawnSync('where.exe', [trimmed], {
+      result = spawnSync(probeExe, [trimmed], {
         encoding: 'utf8',
         // `where.exe` searches the current directory before PATH; pin the
         // probe to the neutral system root so a stray binary in the host's
         // cwd can never shadow the PATH lookup (git-runner family form).
+        // Kept as belt-and-braces over the absolute probe executable
+        // (TC-B4-PC2): the pin protects the TARGET lookup context.
         cwd: process.env.SystemRoot ?? process.env.WINDIR ?? undefined,
         windowsHide: true,
       })
@@ -175,10 +236,13 @@ export async function resolveExecutablePath(name: string): Promise<string> {
     return best.path
   }
   let result: { status: number | null; stdout: string; error?: Error }
+  // TC-B4-PC2: absolute, existence-checked probe executable (resolved before
+  // the try — a missing `which` throws its own fail-closed guidance).
+  const probeExe = whichAbsolute()
   try {
     // `command -v` is a shell builtin with no standalone binary; probe
-    // through the `which` utility (git-runner family form).
-    result = spawnSync('which', [trimmed], { encoding: 'utf8', windowsHide: true })
+    // through the absolute `which` utility (git-runner family form).
+    result = spawnSync(probeExe, [trimmed], { encoding: 'utf8', windowsHide: true })
   } catch (error) {
     throw new Error(
       `command resolution failed for "${trimmed}": which probe threw (${error instanceof Error ? error.message : String(error)}) — refusing to fall back to the bare name`,
