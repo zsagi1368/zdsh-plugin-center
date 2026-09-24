@@ -521,11 +521,27 @@ interface SafeFetchOptions {
   timeoutMs?: number | undefined;
   maxRedirects?: number | undefined;
   headers?: Record<string, string> | undefined;
+  /**
+   * Response body byte cap (F2, ruling-approved default 2 MiB). Oversized
+   * bodies abort the connection and return an explicit error — a truncated
+   * document is never handed to the digest comparison downstream.
+   */
+  maxBytes?: number | undefined;
 }
 /**
  * fetch wrapper that re-validates every hop (redirects are followed manually)
  * so a redirect cannot smuggle us onto a private address, and credential
  * headers are stripped the moment we leave the original origin.
+ *
+ * Channel hardening (TC-B4-PC1 F3): this fetch path serves the remote
+ * catalog + sidecar channel, whose integrity credential (a bare sha256
+ * sidecar) only authenticates over TLS — plaintext http: lets a MITM rewrite
+ * catalog and sidecar together. Every hop therefore requires `https:`.
+ * `assertSafeUrl` keeps accepting http: for display-only homepage validation
+ * (catalog data surface untouched).
+ *
+ * Each hop additionally passes the DNS resolution gate (F2) and the response
+ * body is read under a byte bound (default 2 MiB).
  */
 declare function safeFetch(rawUrl: string | URL, options?: SafeFetchOptions): Promise<CpResult<{
   status: number;
