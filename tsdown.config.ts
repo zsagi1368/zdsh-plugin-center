@@ -21,7 +21,7 @@ export default defineConfig([
     dts: true,
     sourcemap: true,
     outExtensions: () => ({ js: '.js', dts: '.d.ts' }),
-    external: [/^@deepseek-ai\//, /^react($|\/)/],
+    deps: { neverBundle: [/^@deepseek-ai\//, /^react($|\/)/] },
   },
   {
     entry: { 'guardian-entry': 'src/host/guardian-entry.ts' },
@@ -38,7 +38,7 @@ export default defineConfig([
     dts: false,
     sourcemap: true,
     outExtensions: () => ({ js: '.js', dts: '.d.ts' }),
-    external: [/^@deepseek-ai\//, /^react($|\/)/],
+    deps: { neverBundle: [/^@deepseek-ai\//, /^react($|\/)/] },
     banner: { js: loaderBanner },
     footer: { js: loaderFooter },
   },
