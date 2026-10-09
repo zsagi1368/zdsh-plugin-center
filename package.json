@@ -28,7 +28,7 @@
     "prepack": "pnpm build"
   },
   "dsh": {
-    "compatible": ">=0.1.5-rc.2 <0.2.0",
+    "compatible": ">=0.1.5-rc.2 <0.3.0",
     "autoApprove": true,
     "capabilities": [
       {
