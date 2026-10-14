@@ -705,6 +705,7 @@ export function PreinstallSection(props: {
   if (view === null) return null
   return (
     <div className="zdsh-pc">
+      <style>{pluginCenterStyles}</style>
       <div className="zdsh-pc-note">{t.preinstallHeading}</div>
       {view.rows.length === 0 ? (
         <div className="zdsh-pc-note">{t.preinstallEmpty}</div>
