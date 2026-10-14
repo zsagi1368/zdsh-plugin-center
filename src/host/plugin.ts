@@ -31,16 +31,7 @@ export interface HostContextLike {
 }
 
 export const name = PLUGIN_NAME
-/**
- * The market and lifecycle surface IS this HTTP endpoint set, so the web server
- * is a hard dependency. Declared rather than deferred: the deferred
- * `ctx.inject(['webServer'], cb)` idiom never fires on a factory-mounted plugin
- * (probed 2026-10-14 — the same apply registers twelve routes against a stub
- * web server, and none against the live host), which left every
- * `/api2/zdsh-plugin-center/*` poll answering 404 while the preinstall ledger
- * still read `mounted`. FileHub's declared form is the working precedent.
- */
-export const inject: readonly string[] = ['webServer']
+export const inject: readonly string[] = []
 
 function header(req: IncomingMessage, key: string): string | undefined {
   const value = req.headers[key]
@@ -118,17 +109,19 @@ export async function serveRequest(
 }
 
 /** Cordis apply: wire the plugin center onto a running host. */
-export function apply(ctx: HostContextLike & WebContextLike, config: Record<string, unknown> = {}): void {
+export function apply(ctx: HostContextLike, config: Record<string, unknown> = {}): void {
   const services = new PluginCenterServices(config)
-  const disposers = Object.values(ROUTES).map(path =>
-    ctx.webServer.register({
-      kind: 'exact',
-      path,
-      handler: (req, res) => serveRequest(services, req, res),
-    }),
-  )
-  ctx.effect?.(() => {
-    for (const dispose of disposers.reverse()) dispose()
-  }, `${PLUGIN_NAME}: routes`)
-  ctx.logger?.info?.(`${PLUGIN_NAME}: market and lifecycle surface ready`)
+  ctx.inject(['webServer'], (webCtx) => {
+    const disposers = Object.values(ROUTES).map(path =>
+      webCtx.webServer.register({
+        kind: 'exact',
+        path,
+        handler: (req, res) => serveRequest(services, req, res),
+      }),
+    )
+    webCtx.effect?.(() => {
+      for (const dispose of disposers.reverse()) dispose()
+    }, `${PLUGIN_NAME}: routes`)
+    webCtx.logger?.info?.(`${PLUGIN_NAME}: market and lifecycle surface ready`)
+  })
 }

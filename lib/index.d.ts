@@ -502,20 +502,11 @@ interface HostContextLike {
   };
 }
 declare const name = "zdsh-plugin-center";
-/**
- * The market and lifecycle surface IS this HTTP endpoint set, so the web server
- * is a hard dependency. Declared rather than deferred: the deferred
- * `ctx.inject(['webServer'], cb)` idiom never fires on a factory-mounted plugin
- * (probed 2026-10-14 — the same apply registers twelve routes against a stub
- * web server, and none against the live host), which left every
- * `/api2/zdsh-plugin-center/*` poll answering 404 while the preinstall ledger
- * still read `mounted`. FileHub's declared form is the working precedent.
- */
 declare const inject: readonly string[];
 /** Adapt one raw node request into a router request and answer it. */
 declare function serveRequest(services: PluginCenterServices, req: IncomingMessage, res: ServerResponse): Promise<void>;
 /** Cordis apply: wire the plugin center onto a running host. */
-declare function apply(ctx: HostContextLike & WebContextLike, config?: Record<string, unknown>): void;
+declare function apply(ctx: HostContextLike, config?: Record<string, unknown>): void;
 //#endregion
 //#region src/shared/ssrc-guard.d.ts
 /**
