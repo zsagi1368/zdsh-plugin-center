@@ -19,6 +19,17 @@ import { cpErr, cpOk, type CpResult, type PlanState } from '../shared/types.js'
 
 export const PLUGIN_NAME = 'zdsh-plugin-center'
 
+/**
+ * The first-party signed catalog this deployment's market reads by default.
+ *
+ * Upstream DSH ships no market index of its own (only a proposed format), so
+ * the first-party registry — `catalog.json` plus its published
+ * `catalog.json.sha256` sidecar — is the live source. The bundled snapshot
+ * stays the offline fallback, and `remoteCatalogUrl: null` opts out.
+ */
+export const FIRST_PARTY_CATALOG_URL =
+  'https://raw.githubusercontent.com/zsagi1368/zdsh-plugin-registry/main/catalog.json'
+
 export interface PluginCenterConfig {
   defaultProfile: string
   /** Explicit profile directory override; resolved from dshHome when absent. */
@@ -118,7 +129,7 @@ export function normalizeConfig(raw: Record<string, unknown> = {}): PluginCenter
     dataRoot: typeof cfg.dataRoot === 'string' ? cfg.dataRoot : undefined,
     remoteCatalogUrl:
       cfg.remoteCatalogUrl === undefined
-        ? null
+        ? FIRST_PARTY_CATALOG_URL
         : typeof cfg.remoteCatalogUrl === 'string'
           ? cfg.remoteCatalogUrl
           : null,

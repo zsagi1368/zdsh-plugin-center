@@ -1,7 +1,7 @@
 import { homedir } from 'node:os';
 import { join, resolve } from 'node:path';
 import { describe, expect, it } from 'vitest';
-import { resolveDataRoot, type PluginCenterConfig } from '../../src/host/services.js';
+import { FIRST_PARTY_CATALOG_URL, normalizeConfig, resolveDataRoot, type PluginCenterConfig } from '../../src/host/services.js';
 
 /** Minimal valid config carrying only a dataRoot override. */
 const configWithDataRoot = (dataRoot: string): PluginCenterConfig => ({
@@ -56,5 +56,17 @@ describe('resolveDataRoot', () => {
   it('resolves a relative config.dataRoot against the working directory', () => {
     const root = resolveDataRoot(configWithDataRoot('relative/root'), {});
     expect(root).toBe(resolve('relative/root'));
+  });
+});
+
+describe('catalog source default', () => {
+  it('reads the first-party signed registry unless the config opts out', () => {
+    // Upstream DSH ships no market index of its own; the first-party registry
+    // (catalog plus its published sha256 sidecar) is the live source, and the
+    // bundled snapshot stays the offline fallback.
+    expect(normalizeConfig({}).remoteCatalogUrl).toBe(FIRST_PARTY_CATALOG_URL);
+    expect(normalizeConfig({ remoteCatalogUrl: null }).remoteCatalogUrl).toBeNull();
+    expect(normalizeConfig({ remoteCatalogUrl: 'https://example.invalid/c.json' }).remoteCatalogUrl)
+      .toBe('https://example.invalid/c.json');
   });
 });

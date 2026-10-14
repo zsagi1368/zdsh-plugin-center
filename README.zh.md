@@ -91,7 +91,7 @@ dsh plugin --profile web add 'git+https://github.com/zsagi1368/zdsh-plugin-cente
 
 | 键 | 作用 |
 |---|---|
-| `remoteCatalogUrl` | 指向签名远端目录（如 [zdsh-plugin-registry](https://github.com/zsagi1368/zdsh-plugin-registry)） |
+| `remoteCatalogUrl` | 要读取的签名远端目录。默认读第一方 [zdsh-plugin-registry](https://github.com/zsagi1368/zdsh-plugin-registry) 目录：先按 `catalog.json.sha256` 校验、再走缓存、最后回落到内置快照。传 `null` 则只读内置快照。 |
 | `mutationsEnabled: false` | 只读模式 |
 | `webPort` | DSH Web 宿主环回端口（看门狗探测用） |
 

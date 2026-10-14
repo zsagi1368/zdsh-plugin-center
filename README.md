@@ -106,7 +106,7 @@ the `web` profile. Common switches:
 
 | Key | Effect |
 |---|---|
-| `remoteCatalogUrl` | point at a signed remote catalog (e.g. [zdsh-plugin-registry](https://github.com/zsagi1368/zdsh-plugin-registry)) |
+| `remoteCatalogUrl` | signed remote catalog to read. Defaults to the first-party [zdsh-plugin-registry](https://github.com/zsagi1368/zdsh-plugin-registry) catalog: verified against its `catalog.json.sha256` sidecar, cached, then falling back to the bundled snapshot. Pass `null` to read the bundled snapshot only. |
 | `mutationsEnabled: false` | read-only kiosk mode |
 | `webPort` | loopback port of the DSH web host used by the watchdog |
 
