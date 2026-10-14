@@ -490,7 +490,13 @@ interface RouteRegistrar {
 }
 interface WebContextLike {
   webServer: RouteRegistrar;
-  effect?(teardown: () => unknown, label?: string): void;
+  /**
+   * Cordis effect: `execute` runs immediately and its RETURN VALUE is kept as
+   * the unload disposer. Passing the cleanup itself here runs it on the spot
+   * (which is how this plugin's twelve routes were registered and then torn
+   * down inside one tick, leaving a 404 surface on an ACTIVE fiber).
+   */
+  effect?(execute: () => unknown, label?: string): void;
   logger?: {
     info?(message: string): void;
   };
