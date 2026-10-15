@@ -420,6 +420,48 @@ export class LifecycleEngine {
     return cpOk({ restored })
   }
 
+  /**
+   * Delete one backup snapshot.
+   *
+   * The path is validated by `resolveBackupDir` before staging, and the fs port
+   * unlinks links rather than following them, so this cannot be aimed outside
+   * the backups directory. Audited like every other lifecycle action because it
+   * is irreversible — the snapshot is the only copy of those profile files.
+   *
+   * Existence is read with `readdirSync`, not the fs port's `fileExists`: that
+   * one answers `statSync().isFile()`, which is false for a directory, so using
+   * it here reported every snapshot as unreadable.
+   */
+  removeBackup(backupDir: string, backupName: string): CpResult<{ deleted: string }> {
+    let entries: string[]
+    try {
+      entries = readdirSync(backupDir)
+    } catch {
+      return cpErr('backup_failed', `backup ${backupName} is not readable`)
+    }
+    try {
+      this.fs.removePath(backupDir)
+    } catch (error) {
+      return cpErr('backup_failed', error instanceof Error ? error.message : String(error))
+    }
+    // Confirm it is gone rather than trusting the call: a partial removal would
+    // otherwise be reported as a successful delete.
+    let survivors: string[]
+    try {
+      survivors = readdirSync(backupDir)
+    } catch {
+      this.audit({
+        ts: this.now(),
+        action: 'backup.delete',
+        step: backupName,
+        outcome: 'ok',
+        detail: { entries: entries.length },
+      })
+      return cpOk({ deleted: backupName })
+    }
+    return cpErr('backup_failed', `backup ${backupName} survived deletion (${survivors.length} entries left)`)
+  }
+
   private snapshotProfile(profileDir: string): FileSnapshot[] {
     const snapshots: FileSnapshot[] = []
     for (const name of PROFILE_FILES) {

@@ -115,6 +115,9 @@ const messages = {
     restoreBtn: '恢复',
     confirmRestore: (name: string): string =>
       `恢复备份 ${name}？请输入确认码继续：`,
+    deleteBtn: '删除',
+    restoredTitle: '已恢复',
+    deletedTitle: '已删除快照',
     uninstall: '卸载',
     preinstallHeading: '出厂组件',
     preinstallBadgeInstalled: '出厂已装',
@@ -167,6 +170,9 @@ const messages = {
     restoreBtn: 'Restore',
     confirmRestore: (name: string): string =>
       `Restore backup ${name}? Type the confirmation code to continue:`,
+    deleteBtn: 'Delete',
+    restoredTitle: 'Restored',
+    deletedTitle: 'Snapshot deleted',
     uninstall: 'Uninstall',
     preinstallHeading: 'Factory components',
     preinstallBadgeInstalled: 'Preinstalled',
@@ -233,12 +239,23 @@ export function marketUrl(params: {
 
 // ------------------------------------------------------------------ state model
 
+/**
+ * One typed-code confirmation. The same dialog serves every two-phase
+ * operation, so the code is what authorizes the action and `kind` decides what
+ * runs on confirm — the three operations share a shape but not a payload.
+ */
 interface DialogState {
-  planId: string
-  entryId: string
-  action: 'install' | 'update' | 'uninstall'
+  kind: 'plan' | 'restore' | 'delete'
+  /** Line under the title, already localized by whoever opened the dialog. */
+  label: string
   confirmCode: string
-  phraseFull: string
+  /** `plan` only: the staged plan and the phrase it must be confirmed with. */
+  planId?: string
+  phraseFull?: string
+  /** `restore` / `delete` only: the snapshot the code belongs to. */
+  backupName?: string
+  /** `restore` / `delete` only: the one-shot ticket the host issued at staging. */
+  ticketId?: string
 }
 
 interface GuardianView {
@@ -273,6 +290,8 @@ export function PluginCenterApp(props: { locale?: Locale }): ReactNode {
   const [auditTail, setAuditTail] = useState<AuditRow[]>([])
   const [guardian, setGuardian] = useState<GuardianView | null>(null)
   const [backups, setBackups] = useState<BackupRow[]>([])
+  /** Outcome of the last snapshot operation; the operations used to end silently. */
+  const [notice, setNotice] = useState<{ kind: 'restored' | 'deleted'; name: string } | null>(null)
 
   useEffect(() => {
     let alive = true
@@ -332,9 +351,9 @@ export function PluginCenterApp(props: { locale?: Locale }): ReactNode {
         entryId,
       })
       setDialog({
+        kind: 'plan',
+        label: `${action} · ${entryId}`,
         planId: result.planId,
-        entryId,
-        action,
         phraseFull: result.phrase,
         confirmCode: extractSha8(result.phrase),
       })
@@ -343,16 +362,83 @@ export function PluginCenterApp(props: { locale?: Locale }): ReactNode {
     }
   }
 
-  const applyStaged = async (): Promise<void> => {
+  /** Run whatever the typed code authorized, then report what happened. */
+  const confirmDialog = async (): Promise<void> => {
     if (!dialog) return
+    const current = dialog
+    setError('')
     try {
-      await apiPost(`${API}/plan/apply`, { planId: dialog.planId, phrase: dialog.phraseFull })
-      setDialog(null)
-      setApplied(true)
+      if (current.kind === 'plan') {
+        await apiPost(`${API}/plan/apply`, { planId: current.planId, phrase: current.phraseFull })
+        setDialog(null)
+        setApplied(true)
+      } else if (current.kind === 'restore') {
+        await apiPost(`${API}/backups/restore/apply`, {
+          restoreId: current.ticketId,
+          code: current.confirmCode,
+        })
+        setDialog(null)
+        // The restore used to end here with only a list refresh, so a
+        // successful restore and a silently-ignored one looked identical.
+        setNotice({ kind: 'restored', name: current.backupName ?? '' })
+      } else {
+        await apiPost(`${API}/backups/delete/apply`, {
+          deleteId: current.ticketId,
+          code: current.confirmCode,
+        })
+        setDialog(null)
+        setNotice({ kind: 'deleted', name: current.backupName ?? '' })
+      }
       refreshOps()
     } catch (err) {
       setError(err instanceof Error ? err.message : String(err))
       setDialog(null)
+    }
+  }
+
+  /**
+   * Stage a restore and open the confirmation. The host issues a one-shot code
+   * at staging; the dialog requires it to be typed rather than prefilled, which
+   * is what makes it a confirmation instead of a click-through.
+   */
+  const restoreOne = async (name: string): Promise<void> => {
+    setError('')
+    setNotice(null)
+    try {
+      const staged = await apiPost<{ restoreId: string; code: string }>(
+        `${API}/backups/restore`,
+        { name },
+      )
+      setDialog({
+        kind: 'restore',
+        label: `${t.restoreBtn} · ${name}`,
+        backupName: name,
+        ticketId: staged.restoreId,
+        confirmCode: staged.code,
+      })
+    } catch (err) {
+      setError(err instanceof Error ? err.message : String(err))
+    }
+  }
+
+  /** Deleting a snapshot is destructive and irreversible, so it takes a code too. */
+  const deleteOne = async (name: string): Promise<void> => {
+    setError('')
+    setNotice(null)
+    try {
+      const staged = await apiPost<{ deleteId: string; code: string }>(
+        `${API}/backups/delete/stage`,
+        { name },
+      )
+      setDialog({
+        kind: 'delete',
+        label: `${t.deleteBtn} · ${name}`,
+        backupName: name,
+        ticketId: staged.deleteId,
+        confirmCode: staged.code,
+      })
+    } catch (err) {
+      setError(err instanceof Error ? err.message : String(err))
     }
   }
 
@@ -360,26 +446,6 @@ export function PluginCenterApp(props: { locale?: Locale }): ReactNode {
     setError('')
     try {
       await apiPost(`${API}/guardian/toggle`, { action })
-      refreshOps()
-    } catch (err) {
-      setError(err instanceof Error ? err.message : String(err))
-    }
-  }
-
-  const restoreOne = async (name: string): Promise<void> => {
-    setError('')
-    try {
-      // Two-phase: stage returns a one-shot code the user confirms.
-      const staged = await apiPost<{ restoreId: string; code: string }>(
-        `${API}/backups/restore`,
-        { name },
-      )
-      const typed = window.prompt(t.confirmRestore(name), staged.code)
-      if (typed === null || typed.trim() !== staged.code) return
-      await apiPost(`${API}/backups/restore/apply`, {
-        restoreId: staged.restoreId,
-        code: staged.code,
-      })
       refreshOps()
     } catch (err) {
       setError(err instanceof Error ? err.message : String(err))
@@ -399,6 +465,12 @@ export function PluginCenterApp(props: { locale?: Locale }): ReactNode {
       {applied ? (
         <div className="zdsh-pc-banner" role="status">
           <strong>{t.appliedTitle}</strong> — {t.appliedBody}
+        </div>
+      ) : null}
+      {notice !== null ? (
+        <div className="zdsh-pc-banner" role="status">
+          <strong>{notice.kind === 'restored' ? t.restoredTitle : t.deletedTitle}</strong>
+          {` — ${notice.name}`}
         </div>
       ) : null}
       {error !== '' ? <div className="zdsh-pc-banner" role="alert">{`${t.failedTitle}: ${error}`}</div> : null}
@@ -512,6 +584,14 @@ export function PluginCenterApp(props: { locale?: Locale }): ReactNode {
               >
                 {t.restoreBtn}
               </button>
+              <button
+                className="zdsh-pc-btn"
+                onClick={() => {
+                  void deleteOne(row.name)
+                }}
+              >
+                {t.deleteBtn}
+              </button>
             </div>
           ))
         )}
@@ -536,7 +616,7 @@ export function PluginCenterApp(props: { locale?: Locale }): ReactNode {
             setDialog(null)
           }}
           onConfirm={() => {
-            void applyStaged()
+            void confirmDialog()
           }}
         />
       ) : null}
@@ -626,7 +706,7 @@ function ConfirmDialog(props: {
     <div className="zdsh-pc-dialog-backdrop" role="presentation">
       <div className="zdsh-pc-dialog" role="dialog" aria-modal="true">
         <strong>{t.confirmTitle}</strong>
-        <div className="zdsh-pc-note">{`${props.dialog.action} · ${props.dialog.entryId}`}</div>
+        <div className="zdsh-pc-note">{props.dialog.label}</div>
         <div className="zdsh-pc-code">{props.dialog.confirmCode}</div>
         <label className="zdsh-pc-note">{t.confirmHint}</label>
         <input

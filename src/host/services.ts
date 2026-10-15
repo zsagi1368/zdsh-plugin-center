@@ -341,6 +341,7 @@ export class PluginCenterServices {
   }
 
   private readonly restores = new Map<string, { name: string; dir: string; code: string; expiresAtMs: number }>()
+  private readonly deletes = new Map<string, { name: string; dir: string; code: string; expiresAtMs: number }>()
 
   /** Stage a restore: returns a one-shot id/code pair for the confirm step. */
   stageRestore(name: string): CpResult<{ restoreId: string; code: string }> {
@@ -374,6 +375,42 @@ export class PluginCenterServices {
     }
     this.restores.delete(restoreId) // one-shot consumption on success only
     return this.engine.restoreBackupInto(this.profileDir, staged.dir, staged.name)
+  }
+
+  /**
+   * Stage a snapshot deletion. Same two-phase shape as restore: the host issues
+   * a one-shot code and only a matching echo consumes it, so a stray POST from
+   * anywhere on the page cannot destroy a snapshot on its own.
+   */
+  stageDelete(name: string): CpResult<{ deleteId: string; code: string }> {
+    const resolved = this.resolveBackupDir(name)
+    if (!resolved.ok) return resolved
+    const deleteId = randomBytes(8).toString('hex')
+    const code = randomBytes(6).toString('hex')
+    this.deletes.set(deleteId, {
+      name,
+      dir: resolved.data,
+      code,
+      expiresAtMs: Date.now() + 5 * 60_000,
+    })
+    return cpOk({ deleteId, code })
+  }
+
+  /** Consume a staged deletion and remove the snapshot. */
+  applyDelete(deleteId: string, code: string): CpResult<{ deleted: string }> {
+    const staged = this.deletes.get(deleteId)
+    if (staged === undefined) {
+      return cpErr('plan_not_found', 'unknown or expired delete request')
+    }
+    if (Date.now() > staged.expiresAtMs) {
+      this.deletes.delete(deleteId)
+      return cpErr('plan_not_found', 'delete request expired')
+    }
+    if (code !== staged.code) {
+      return cpErr('confirmation_mismatch', 'confirmation code does not match')
+    }
+    this.deletes.delete(deleteId) // one-shot consumption on success only
+    return this.engine.removeBackup(staged.dir, staged.name)
   }
 
   get runtime(): RuntimeIdentity {

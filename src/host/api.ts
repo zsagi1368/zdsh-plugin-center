@@ -24,6 +24,8 @@ export const ROUTES = {
   backups: [API_PREFIX, 'backups'].join('/'),
   backupRestore: [API_PREFIX, 'backups/restore'].join('/'),
   backupRestoreApply: [API_PREFIX, 'backups/restore/apply'].join('/'),
+  backupDelete: [API_PREFIX, 'backups/delete/stage'].join('/'),
+  backupDeleteApply: [API_PREFIX, 'backups/delete/apply'].join('/'),
   restartRequest: [API_PREFIX, 'restart/request'].join('/'),
 } as const
 
@@ -33,6 +35,8 @@ const WRITE_PATHS: ReadonlySet<string> = new Set([
   ROUTES.guardianToggle,
   ROUTES.backupRestore,
   ROUTES.backupRestoreApply,
+  ROUTES.backupDelete,
+  ROUTES.backupDeleteApply,
   ROUTES.restartRequest,
 ])
 
@@ -191,6 +195,22 @@ export async function handleApiRequest(
       })
     }
     return fromCp(services.applyRestore(body.restoreId, body.code))
+  }
+  if (matches(request, 'POST', ROUTES.backupDelete)) {
+    const body = (request.body ?? {}) as { name?: string }
+    if (!body.name) {
+      return json(400, { error: { code: 'invalid_plan', message: 'name is required' } })
+    }
+    return fromCp(services.stageDelete(body.name))
+  }
+  if (matches(request, 'POST', ROUTES.backupDeleteApply)) {
+    const body = (request.body ?? {}) as { deleteId?: string; code?: string }
+    if (!body.deleteId || !body.code) {
+      return json(400, {
+        error: { code: 'invalid_plan', message: 'deleteId and code are required' },
+      })
+    }
+    return fromCp(services.applyDelete(body.deleteId, body.code))
   }
   if (matches(request, 'GET', ROUTES.audit)) {
     return json(200, await readAuditTail(resolveDataRoot(services.config)))

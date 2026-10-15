@@ -307,6 +307,21 @@ declare class LifecycleEngine {
   restoreBackupInto(profileDir: string, backupDir: string, backupName: string): CpResult<{
     restored: string[];
   }>;
+  /**
+   * Delete one backup snapshot.
+   *
+   * The path is validated by `resolveBackupDir` before staging, and the fs port
+   * unlinks links rather than following them, so this cannot be aimed outside
+   * the backups directory. Audited like every other lifecycle action because it
+   * is irreversible — the snapshot is the only copy of those profile files.
+   *
+   * Existence is read with `readdirSync`, not the fs port's `fileExists`: that
+   * one answers `statSync().isFile()`, which is false for a directory, so using
+   * it here reported every snapshot as unreadable.
+   */
+  removeBackup(backupDir: string, backupName: string): CpResult<{
+    deleted: string;
+  }>;
   private snapshotProfile;
   private now;
   private audit;
@@ -457,6 +472,7 @@ declare class PluginCenterServices {
   /** Resolve a backup name to its contained directory, or fail. */
   private resolveBackupDir;
   private readonly restores;
+  private readonly deletes;
   /** Stage a restore: returns a one-shot id/code pair for the confirm step. */
   stageRestore(name: string): CpResult<{
     restoreId: string;
@@ -465,6 +481,19 @@ declare class PluginCenterServices {
   /** Consume a staged restore and run the byte-verified copy back. */
   applyRestore(restoreId: string, code: string): CpResult<{
     restored: string[];
+  }>;
+  /**
+   * Stage a snapshot deletion. Same two-phase shape as restore: the host issues
+   * a one-shot code and only a matching echo consumes it, so a stray POST from
+   * anywhere on the page cannot destroy a snapshot on its own.
+   */
+  stageDelete(name: string): CpResult<{
+    deleteId: string;
+    code: string;
+  }>;
+  /** Consume a staged deletion and remove the snapshot. */
+  applyDelete(deleteId: string, code: string): CpResult<{
+    deleted: string;
   }>;
   get runtime(): RuntimeIdentity;
   get profileDir(): string;
@@ -575,6 +604,8 @@ declare const ROUTES: {
   readonly backups: string;
   readonly backupRestore: string;
   readonly backupRestoreApply: string;
+  readonly backupDelete: string;
+  readonly backupDeleteApply: string;
   readonly restartRequest: string;
 };
 declare const INTENT_HEADER = "x-zdsh-pc-intent";
