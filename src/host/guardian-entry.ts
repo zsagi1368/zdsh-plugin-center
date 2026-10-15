@@ -194,3 +194,9 @@ export function autoRunOnImport(argv: string[], isDirect: boolean): void {
       process.exit(1)
     })
 }
+
+// Run when this file is the process entry. The watchdog is only ever spawned as
+// `node guardian-entry.js --config <file>` and tests import it without the flag,
+// so the flag decides. Without this call the spawned watchdog loaded, exported,
+// and exited without probing, which is why the status stayed `idle`.
+autoRunOnImport(process.argv, process.argv.includes('--config'))

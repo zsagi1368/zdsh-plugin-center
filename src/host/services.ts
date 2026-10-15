@@ -5,7 +5,7 @@ import { existsSync, readFileSync, readdirSync } from 'node:fs'
 import { randomBytes, randomUUID } from 'node:crypto'
 import { LifecycleEngine, type EngineDeps } from './lifecycle-engine.js'
 import { nodePorts } from './ports.js'
-import { startGuardian, stopGuardian, statusPath, type GuardianStatus } from './guardian.js'
+import { guardianRunning, startGuardian, stopGuardian, statusPath, type GuardianStatus } from './guardian.js'
 import type { PlanAction } from './plans.js'
 import { loadCatalog, type LoadedCatalog } from './snapshot.js'
 import {
@@ -16,6 +16,7 @@ import {
   type Page,
 } from '../shared/catalog.js'
 import { cpErr, cpOk, type CpResult, type PlanState } from '../shared/types.js'
+import { runningCliInvocation } from '../shared/resolve-executable.js'
 
 export const PLUGIN_NAME = 'zdsh-plugin-center'
 
@@ -85,9 +86,20 @@ export function resolveDataRoot(
   return join(homedir(), '.zdsh-plugin-center')
 }
 
+/**
+ * What the watchdog should run to bring the host back: this host's own
+ * invocation when it can be established, else the historical bare name.
+ *
+ * `web` is appended because the watchdog restarts the web host specifically,
+ * matching the previous default's argument.
+ */
+function guardianLaunchDefault(): { cmd: string; args: string[] } {
+  const cli = runningCliInvocation()
+  return cli === null ? { cmd: 'dsh', args: ['web'] } : { cmd: cli.cmd, args: [...cli.args, 'web'] }
+}
+
 /** Storage home the host CLI resolves profiles against (config → env → defaults). */
-function profileHome(config: PluginCenterConfig): string {
-  return (
+function profileHome(config: PluginCenterConfig): string {  return (
     config.dshHome ?? process.env.DSH_BRANCH_HOME ?? process.env.DSH_HOME ?? defaultDshHome()
   )
 }
@@ -254,11 +266,15 @@ export class PluginCenterServices {
     restartsUsed?: number
   } {
     const port = this.config.webPort ?? 3080
+    const dataRoot = resolveDataRoot(this.config)
+    const running = guardianRunning(dataRoot)
     try {
-      const parsed = JSON.parse(readFileSync(statusPath(resolveDataRoot(this.config)), 'utf8')) as GuardianStatus
+      const parsed = JSON.parse(readFileSync(statusPath(dataRoot), 'utf8')) as GuardianStatus
       return {
-        running: parsed.state !== 'give-up',
-        state: parsed.state,
+        running,
+        // `status.json` outlives a stop, so a stopped watchdog would otherwise
+        // keep reporting its last written state (usually 'healthy').
+        state: running ? parsed.state : 'idle',
         port,
         checkedAtMs: parsed.checkedAtMs,
         restartsUsed: parsed.restartsUsed,
@@ -279,7 +295,10 @@ export class PluginCenterServices {
     const started = await startGuardian({
       dataRoot: resolveDataRoot(this.config),
       port: this.config.webPort ?? 3080,
-      launch: this.config.launchCommand ?? { cmd: 'dsh', args: ['web'] },
+      // The watchdog relaunches this host after a crash, so the default must be
+      // the host's own absolute invocation: a factory install exposes `dsh` only
+      // as a shell function, and the bare name resolves nowhere.
+      launch: this.config.launchCommand ?? guardianLaunchDefault(),
     })
     // A failed start is an error, not a 200 carrying ok:false inside.
     if (!started.ok) {

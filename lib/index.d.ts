@@ -239,23 +239,24 @@ interface EngineDeps {
   healthProbe?: HealthProbe;
   auditSink?: (line: string) => void;
 }
-/**
- * Pure command builders so tests can pin exact shapes without spawning.
- *
- * `profileName` is the bare profile NAME, not a directory: the official CLI
- * resolves `--profile <name>` itself and rejects any value containing a path
- * separator (app-boot resolveProfileDir — CP-1). The directory lives on the
- * plan as `profileDir` and is used only for file-level operations.
- */
-declare function buildInstallCmd(profileName: string, owner: string, repo: string, commit: string): {
+declare function buildInstallCmd(profileName: string, owner: string, repo: string, commit: string, cli?: {
+  cmd: string;
+  args: string[];
+}): {
   cmd: string;
   args: string[];
 };
-declare function buildNpmAddCmd(profileName: string, pkgName: string, version: string): {
+declare function buildNpmAddCmd(profileName: string, pkgName: string, version: string, cli?: {
+  cmd: string;
+  args: string[];
+}): {
   cmd: string;
   args: string[];
 };
-declare function buildRemoveCmd(profileName: string, pkgName: string): {
+declare function buildRemoveCmd(profileName: string, pkgName: string, cli?: {
+  cmd: string;
+  args: string[];
+}): {
   cmd: string;
   args: string[];
 };

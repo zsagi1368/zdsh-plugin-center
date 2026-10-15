@@ -14,6 +14,7 @@ import {
   type PlanAction,
 } from './plans.js'
 import { ensureNoReparse, type EnginePorts } from './ports.js'
+import { runningCliInvocation } from '../shared/resolve-executable.js'
 
 /** The three profile files an install touches; the truth lives here. */
 export const PROFILE_FILES = ['package.json', 'pnpm-workspace.yaml', 'cordis.patch.yml'] as const
@@ -50,16 +51,26 @@ export interface EngineDeps {
  * resolves `--profile <name>` itself and rejects any value containing a path
  * separator (app-boot resolveProfileDir — CP-1). The directory lives on the
  * plan as `profileDir` and is used only for file-level operations.
+ *
+ * `cli` is the invocation that runs the CLI, injected rather than hardcoded so
+ * these stay pure: the caller passes the host's own absolute invocation
+ * (`runningCliInvocation()`), because a factory install exposes `dsh` only as a
+ * shell function and the bare name cannot be resolved. The default keeps the
+ * historical shape for callers that genuinely want the PATH name.
  */
+const DEFAULT_CLI = { cmd: 'dsh', args: [] as string[] }
+
 export function buildInstallCmd(
   profileName: string,
   owner: string,
   repo: string,
   commit: string,
+  cli: { cmd: string; args: string[] } = DEFAULT_CLI,
 ): { cmd: string; args: string[] } {
   return {
-    cmd: 'dsh',
+    cmd: cli.cmd,
     args: [
+      ...cli.args,
       'plugin',
       '--profile',
       profileName,
@@ -69,12 +80,21 @@ export function buildInstallCmd(
   }
 }
 
-export function buildNpmAddCmd(profileName: string, pkgName: string, version: string): { cmd: string; args: string[] } {
-  return { cmd: 'dsh', args: ['plugin', '--profile', profileName, 'add', `${pkgName}@${version}`] }
+export function buildNpmAddCmd(
+  profileName: string,
+  pkgName: string,
+  version: string,
+  cli: { cmd: string; args: string[] } = DEFAULT_CLI,
+): { cmd: string; args: string[] } {
+  return { cmd: cli.cmd, args: [...cli.args, 'plugin', '--profile', profileName, 'add', `${pkgName}@${version}`] }
 }
 
-export function buildRemoveCmd(profileName: string, pkgName: string): { cmd: string; args: string[] } {
-  return { cmd: 'dsh', args: ['plugin', '--profile', profileName, 'remove', pkgName] }
+export function buildRemoveCmd(
+  profileName: string,
+  pkgName: string,
+  cli: { cmd: string; args: string[] } = DEFAULT_CLI,
+): { cmd: string; args: string[] } {
+  return { cmd: cli.cmd, args: [...cli.args, 'plugin', '--profile', profileName, 'remove', pkgName] }
 }
 
 /** List lifecycle scripts a package manifest would run on install. */
@@ -325,8 +345,11 @@ export class LifecycleEngine {
   }
 
   private commandFor(plan: InstallPlan): { cmd: string; args: string[] } {
+    // Resolve once per plan: the host's own invocation, falling back to the
+    // historical bare name only when the host cannot name itself.
+    const cli = runningCliInvocation() ?? undefined
     if (plan.action === 'uninstall') {
-      return buildRemoveCmd(plan.profile, this.targetPackageName(plan.entry))
+      return buildRemoveCmd(plan.profile, this.targetPackageName(plan.entry), cli)
     }
     if (plan.entry.source === 'github') {
       return buildInstallCmd(
@@ -334,9 +357,10 @@ export class LifecycleEngine {
         plan.entry.owner as string,
         plan.entry.repo as string,
         plan.entry.pinnedCommit as string,
+        cli,
       )
     }
-    return buildNpmAddCmd(plan.profile, plan.entry.packageName as string, plan.entry.version as string)
+    return buildNpmAddCmd(plan.profile, plan.entry.packageName as string, plan.entry.version as string, cli)
   }
 
   /** Restore each backed-up file to its original path and verify bytes. */

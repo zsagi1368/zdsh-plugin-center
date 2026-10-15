@@ -6,7 +6,7 @@
  * (hardcoded, never a configurable hostname), applies the shared bounded
  * restart budget, and records its status under `<dataRoot>/guardian/`.
  */
-import { existsSync, readFileSync, unlinkSync, writeFileSync } from 'node:fs'
+import { existsSync, mkdirSync, readFileSync, unlinkSync, writeFileSync } from 'node:fs'
 import { createHash } from 'node:crypto'
 import { join } from 'node:path'
 import { fileURLToPath } from 'node:url'
@@ -41,9 +41,19 @@ export function pidPath(dataRoot: string): string {
   return join(guardianDir(dataRoot), 'pid.txt')
 }
 
-/** Resolve the built guardian entrypoint next to this module. */
+/**
+ * Resolve the built guardian entrypoint next to this module.
+ *
+ * `guardian.ts` is bundled into `lib/index.js`, so "next to this module" is the
+ * sibling `lib/guardian-entry.js` — `./guardian-entry.js`. The previous
+ * candidates (`../guardian-entry.js`, `../../lib/guardian-entry.js`) assumed the
+ * module was emitted as its own `lib/guardian.js` file, which the build does not
+ * do, so both missed and every watchdog start failed before it spawned.
+ * `./guardian-entry.js` is tried first; the old shapes stay as fallbacks in case
+ * a future build emits a separate chunk.
+ */
 export function guardianEntryPath(): string {
-  for (const candidate of ['../guardian-entry.js', '../../lib/guardian-entry.js']) {
+  for (const candidate of ['./guardian-entry.js', '../guardian-entry.js', '../../lib/guardian-entry.js']) {
     const path = fileURLToPath(new URL(candidate, import.meta.url))
     if (existsSync(path)) return path
   }
@@ -82,15 +92,33 @@ export async function startGuardian(config: GuardianConfig): Promise<PidResult> 
   }
   const cfgFile = join(dir, 'config.json')
   const configBytes = JSON.stringify(config)
-  writeFileSync(cfgFile, configBytes, 'utf8')
+  // The watchdog entrypoint creates this directory for its own artifacts, but
+  // that process only starts after this write — so the first-ever start would
+  // otherwise fail with ENOENT before anything was spawned.
+  try {
+    mkdirSync(dir, { recursive: true })
+    writeFileSync(cfgFile, configBytes, 'utf8')
+  } catch {
+    return { ok: false, reason: 'guardian state directory is not writable' }
+  }
   // Integrity sidecar: the entry refuses a tampered config, so a write-only
   // primitive cannot escalate into arbitrary relaunch commands.
   const digest = createHash('sha256').update(configBytes, 'utf8').digest('hex')
   writeFileSync(`${cfgFile}.sha256`, digest, 'utf8')
+  const entry = ((): string | null => {
+    try {
+      return guardianEntryPath()
+    } catch {
+      return null
+    }
+  })()
+  if (entry === null) {
+    return { ok: false, reason: 'guardian entrypoint is missing from this build' }
+  }
   const result = await import('node:child_process').then(
     ({ spawn }) => {
       // Same argument-list shape as ports.runViaSpawn; no shell anywhere.
-      const child = spawn(process.execPath, watchdogArgs(guardianEntryPath(), cfgFile), {
+      const child = spawn(process.execPath, watchdogArgs(entry, cfgFile), {
         detached: true,
         stdio: 'ignore',
         windowsHide: true,
@@ -108,9 +136,22 @@ export async function startGuardian(config: GuardianConfig): Promise<PidResult> 
   return result
 }
 
-/** Stop a running watchdog; safe when none is running. */
-export function stopGuardian(dataRoot: string): { stopped: boolean } {
+/**
+ * Whether the watchdog named by the pidfile is still alive.
+ *
+ * The status surface needs this: the last written `status.json` survives a stop,
+ * so deriving `running` from the state alone reports a stopped watchdog as
+ * healthy forever.
+ */
+export function guardianRunning(dataRoot: string): boolean {
   const pidFile = pidPath(dataRoot)
+  if (!existsSync(pidFile)) return false
+  const pid = Number.parseInt(readFileSync(pidFile, 'utf8').trim(), 10)
+  return Number.isFinite(pid) && isAlive(pid)
+}
+
+/** Stop a running watchdog; safe when none is running. */
+export function stopGuardian(dataRoot: string): { stopped: boolean } {  const pidFile = pidPath(dataRoot)
   if (!existsSync(pidFile)) return { stopped: false }
   const pid = Number.parseInt(readFileSync(pidFile, 'utf8').trim(), 10)
   try {

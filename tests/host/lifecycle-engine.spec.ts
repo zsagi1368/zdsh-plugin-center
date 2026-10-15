@@ -1,6 +1,6 @@
 import { mkdtempSync, readFileSync, writeFileSync, existsSync } from 'node:fs';
 import { tmpdir } from 'node:os';
-import { join } from 'node:path';
+import { isAbsolute, join } from 'node:path';
 import { afterEach, describe, expect, it } from 'vitest';
 import {
   LifecycleEngine,
@@ -120,8 +120,12 @@ describe('lifecycle engine happy path', () => {
 
     expect(h.commands).toHaveLength(1);
     const spec = h.commands[0] as CommandSpec;
-    expect(spec.cmd).toBe('dsh');
-    expect(spec.args).toEqual([
+    // The command is the host's own absolute invocation whenever the host can
+    // name itself (a factory install exposes `dsh` only as a shell function, so
+    // the bare name does not resolve). `dsh` is the documented fallback, never
+    // a silent one — so the pinned contract is: absolute or that exact fallback.
+    expect(spec.cmd === 'dsh' || isAbsolute(spec.cmd)).toBe(true);
+    expect(spec.args.slice(-5)).toEqual([
       'plugin',
       '--profile',
       'web',
@@ -230,7 +234,9 @@ describe('script gating and uninstall', () => {
     h.engine.confirmPlan(built.data.plan.planId, built.data.phrase);
     const executed = await h.engine.applyPlan(built.data.plan.planId);
     expect(executed.ok).toBe(true);
-    expect((h.commands[0] as CommandSpec).args).toEqual([
+    // Subcommand tail only: the command itself is the host's own absolute
+    // invocation when it can name itself, else the `dsh` fallback.
+    expect((h.commands[0] as CommandSpec).args.slice(-5)).toEqual([
       'plugin',
       '--profile',
       'web',

@@ -104,9 +104,16 @@ export async function serveRequest(
   }
   try {
     send(res, await handleApiRequest(services, request))
-  } catch {
+  } catch (error) {
     // Router handlers never throw; this guards against adapter surprises.
-    // Internal details (paths etc.) stay server-side.
+    // The response stays generic (internal details — paths, commands — are
+    // server-side), but the reason is logged, because a silent generic 500 is
+    // undiagnosable from the UI and this catch was the only trace of several
+    // real failures.
+    console.error(
+      `[${PLUGIN_NAME}] ${method} ${url.pathname} failed:`,
+      error instanceof Error ? error.message : error,
+    )
     send(res, {
       status: 500,
       payload: { error: { code: 'internal', message: 'internal error' } },

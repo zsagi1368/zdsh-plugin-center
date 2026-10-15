@@ -39,7 +39,7 @@
  * this module — targets, carriers OR probes — ever takes a bare name.
  */
 import { accessSync, constants, existsSync } from 'node:fs'
-import { join, win32, posix } from 'node:path'
+import { join, posix, resolve, win32 } from 'node:path'
 
 /**
  * Argument allowlist for spawned commands: catalog-controlled values flow
@@ -114,6 +114,28 @@ export function whereExeAbsolute(): string {
   throw new Error(
     'command resolution failed: no absolute where.exe probe available (SystemRoot/WINDIR unset, relative, or without System32\\where.exe, and the fixed C:\\Windows\\System32\\where.exe is missing) — refusing to resolve through a bare probe name (fail-closed)',
   )
+}
+
+/**
+ * The CLI that is running this host, as an absolute command plus the args that
+ * must precede any subcommand — or null when it cannot be established.
+ *
+ * The factory install ships `dsh` as a shell function in `env.sh` and puts no
+ * executable on PATH, so the historical bare-`dsh` default resolved on
+ * developer machines (which have the npm shim) and failed on every normal
+ * install. The host always knows the script it was started from, and that path
+ * is absolute, which is all the fail-closed resolver needs — so the plugin can
+ * name itself instead of guessing.
+ *
+ * Returning `process.execPath` + the entry script keeps the spawn shape
+ * identical to `dsh`: the CLI is a node program either way.
+ */
+export function runningCliInvocation(): { cmd: string; args: string[] } | null {
+  const entry = process.argv[1]
+  if (typeof entry !== 'string' || entry.trim() === '') return null
+  const absolute = isAbsolutePlatform(entry) ? entry : resolve(entry)
+  if (!existsSync(absolute)) return null
+  return { cmd: process.execPath, args: [absolute] }
 }
 
 /** Common install locations of the POSIX `which` utility, best first. */

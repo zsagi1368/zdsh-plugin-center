@@ -167,8 +167,14 @@ describe('plugin center HTTP surface', () => {
     expect(applied.status).toBe(200);
     expect((applied.payload as { state: string }).state).toBe('restart-pending');
     expect(commands).toHaveLength(1);
-    expect((commands[0] as CommandSpec).args.slice(0, 3)).toEqual(['plugin', '--profile', 'web']);
-    expect((commands[0] as CommandSpec).args.at(-1)).toBe(`git+https://github.com/owner/alpha.git#${COMMIT_A}`);
+    // Anchor on the subcommand rather than the head: the command itself is the
+    // host's own absolute invocation when it can name itself, so the leading
+    // args are not fixed (see runningCliInvocation).
+    const args = (commands[0] as CommandSpec).args;
+    const subcommandAt = args.indexOf('plugin');
+    expect(subcommandAt).toBeGreaterThanOrEqual(0);
+    expect(args.slice(subcommandAt, subcommandAt + 3)).toEqual(['plugin', '--profile', 'web']);
+    expect(args.at(-1)).toBe(`git+https://github.com/owner/alpha.git#${COMMIT_A}`);
   });
 
   it('refuses to stage when the profileDir override diverges from the CLI-resolved directory (CP-1)', async () => {
