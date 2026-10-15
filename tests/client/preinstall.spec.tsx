@@ -284,6 +284,17 @@ describe('PreinstallSection rendering', () => {
     expect(en).toContain('Off at factory');
   });
 
+  it('injects pluginCenterStyles into the DOM so factory rows get their layout', async () => {
+    await act(async () => {
+      root.render(<PreinstallSection locale="zh" remote={remoteLike(async () => ok({ plugins: ROSTER_PLUGINS }), async () => ok(HEALTHY_REPORT))} />);
+    });
+    await flush();
+    const styleTags = container.querySelectorAll('style');
+    const pcStyle = Array.from(styleTags).find(s => s.textContent?.includes('.zdsh-pc'));
+    expect(pcStyle).toBeDefined();
+    expect(pcStyle?.textContent).toContain('.zdsh-pc-audit-row');
+  });
+
   it('hides itself entirely on an old host without the report face (no red screen)', async () => {
     await act(async () => {
       root.render(
