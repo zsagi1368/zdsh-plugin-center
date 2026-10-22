@@ -147,23 +147,49 @@ export class PlanStore {
     const existing = this.pending.get(plan.planId)
     if (existing !== undefined) {
       // Content-derived ids collide when the same target is staged twice.
-      // Terminal states may be replaced (re-stage after done/rollback);
+      // Terminal states may be replaced (re-stage after done/rollback/failure);
       // live plans are never reset, keeping the one-shot window closed.
-      const terminal = existing.state === 'restart-pending' || existing.state === 'rolled-back'
+      const terminal = existing.state === 'restart-pending'
+        || existing.state === 'rolled-back'
+        || existing.state === 'failed'
       if (!terminal) {
-        throw new CpError(CpErrorCode.invalidPlan, `plan ${plan.planId} already exists`)
+        // An EXPIRED plan is not a live one: its confirmation window closed
+        // minutes ago, so nothing about it can still be confirmed. Refusing
+        // to re-stage it would leave the target permanently un-installable —
+        // the id is derived from the target, so every later attempt to reach
+        // the same plugin computes the SAME id and hits this refusal. The
+        // window is what the TTL expresses, so an expired record is replaced
+        // rather than obeyed.
+        if (Date.now() > existing.expiresAtMs) {
+          this.pending.delete(plan.planId)
+        } else {
+          throw new CpError(CpErrorCode.invalidPlan, `plan ${plan.planId} already exists`)
+        }
       }
     }
     this.pending.set(plan.planId, {
       plan,
       state: 'planned',
-      expiresAtMs: Date.parse(plan.createdAt) + this.ttlMs,
+      // The window opens NOW, not at the plan's own creation time: a plan
+      // re-staged over an expired record carries the ORIGINAL createdAt (the
+      // id is derived from the target, not from the attempt), so measuring
+      // from it would open a window that is already closed.
+      expiresAtMs: Math.max(Date.parse(plan.createdAt), Date.now()) + this.ttlMs,
     })
   }
 
   get(planId: string): { plan: InstallPlan; state: PlanState } | null {
     const record = this.pending.get(planId)
-    return record ? { plan: record.plan, state: record.state } : null
+    if (record === undefined) return null
+    // An expired plan is not a live one: its confirmation window closed, so
+    // reading it as if it were still pending would show a confirmable plan
+    // that `confirm` would then refuse. Dropping it here honours the TTL on
+    // the read path too, which is the path every caller actually takes.
+    if (Date.now() > record.expiresAtMs) {
+      this.pending.delete(planId)
+      return null
+    }
+    return { plan: record.plan, state: record.state }
   }
 
   markState(planId: string, state: PlanState): void {

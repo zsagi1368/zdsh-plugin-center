@@ -65,6 +65,12 @@ export type PlanState =
   | 'applied'
   | 'rolled-back'
   | 'restart-pending'
+  /**
+   * The attempt failed and its rollback could not be verified. A FINISHED
+   * attempt, not a live one: the plan store replaces a failed plan rather
+   * than refusing the same target forever.
+   */
+  | 'failed'
 
 export type AuditOutcome = 'ok' | 'error' | 'rolled-back'
 

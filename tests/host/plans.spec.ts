@@ -134,4 +134,40 @@ describe('plan store one-shot semantics', () => {
     // the original pending plan survives untouched
     expect(store.get(plan.planId)?.state).toBe('planned');
   });
+
+  it('re-stages over an expired plan instead of refusing the target forever', async () => {
+    // The plan id is derived from the target, so every later attempt at the
+    // same plugin computes the SAME id. Refusing an expired record therefore
+    // made the plugin permanently un-installable: the operator saw
+    // "plan <id>-install already exists" on every retry, with no way through.
+    const store = new PlanStore(10); // 10ms ttl
+    const plan = createPlan(ghEntry(), 'install', 'web', PROFILE_DIR);
+    store.add(plan);
+    await new Promise((r) => setTimeout(r, 25));
+    // The window is closed, so the same target may be staged again.
+    expect(() => store.add(plan)).not.toThrow();
+    expect(store.get(plan.planId)?.state).toBe('planned');
+  });
+
+  it('drops an expired plan on read, so it is never shown as confirmable', async () => {
+    const store = new PlanStore(10);
+    const plan = createPlan(ghEntry(), 'install', 'web', PROFILE_DIR);
+    store.add(plan);
+    await new Promise((r) => setTimeout(r, 25));
+    // Reading it as pending would offer a confirmation that `confirm` then
+    // refuses — the plan would look live and be unusable.
+    expect(store.get(plan.planId)).toBeNull();
+  });
+
+  it('re-stages over a plan whose attempt failed', () => {
+    // A failed attempt is a FINISHED attempt. Treating it as live left the
+    // target permanently blocked, because every retry collides on the same
+    // content-derived id.
+    const store = new PlanStore();
+    const plan = createPlan(ghEntry(), 'install', 'web', PROFILE_DIR);
+    store.add(plan);
+    store.markState(plan.planId, 'failed');
+    expect(() => store.add(plan)).not.toThrow();
+    expect(store.get(plan.planId)?.state).toBe('planned');
+  });
 });

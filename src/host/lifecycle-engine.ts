@@ -316,7 +316,14 @@ export class LifecycleEngine {
     } catch (error) {
       const code = error instanceof CpError ? error.code : CpErrorCode.internal
       const rolledBack = backup ? this.rollbackFromBackup(backup) : true
-      const finalState: PlanState = rolledBack ? 'rolled-back' : 'executing'
+      // A failed apply is a FINISHED attempt either way. The old 'executing'
+      // verdict for an unverified rollback was not a live plan — it was a
+      // failed one that the plan store could not distinguish from a plan
+      // still running, so it blocked every later attempt at the same target
+      // for good (the id is content-derived, so every attempt collides).
+      // The failure is already reported to the operator by the error below;
+      // the plan must not also refuse the retry.
+      const finalState: PlanState = rolledBack ? 'rolled-back' : 'failed'
       this.states.set(planId, finalState)
       this.plans.markState(planId, finalState)
       this.audit({

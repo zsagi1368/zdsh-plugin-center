@@ -39,7 +39,13 @@ declare function cpErr<T = never>(code: CpErrorCode, message: string): CpResult<
  */
 declare function normalizePluginId(raw: string): CpResult<string>;
 /** Lifecycle states of a plan as it moves through the engine. */
-type PlanState = 'draft' | 'planned' | 'confirmed' | 'executing' | 'applied' | 'rolled-back' | 'restart-pending';
+type PlanState = 'draft' | 'planned' | 'confirmed' | 'executing' | 'applied' | 'rolled-back' | 'restart-pending' |
+/**
+ * The attempt failed and its rollback could not be verified. A FINISHED
+ * attempt, not a live one: the plan store replaces a failed plan rather
+ * than refusing the same target forever.
+ */
+'failed';
 type AuditOutcome = 'ok' | 'error' | 'rolled-back';
 interface AuditEvent {
   ts: string;

@@ -7,7 +7,7 @@
  * main repo is not touched at all).
  *
  * The view is SYNTHESIZED from two existing Remote faces:
- * - `list()` → the governance roster; rows carrying `provenance==='preinstall'`
+ * - `list()` → the governance roster; rows carrying `origin==='preinstall'`
  *   are the admitted factory artifacts (source stays 'native' by design);
  * - `preinstallReport()` → the durable preinstall ledger (§1.4), keyed by the
  *   same canonical seedId, carrying the executor verdict plus the `mount`
@@ -27,8 +27,27 @@ export interface RosterRowLike {
   displayName?: unknown
   version?: unknown
   status?: unknown
-  /** Only `'preinstall'` participates in the factory view; any other value is skipped. */
+  /**
+   * Only `'preinstall'` participates in the factory view; any other value is
+   * skipped. The host's wire field is `origin` — the roster summary declares
+   * `readonly origin?: 'preinstall'` — and `provenance` is accepted as the
+   * older spelling so a host that still sends it keeps working.
+   */
+  origin?: unknown
   provenance?: unknown
+}
+
+/**
+ * Whether one roster row is a factory-preinstalled artifact.
+ *
+ * The host names the field `origin`; `provenance` is the older spelling this
+ * module was written against. Reading only the old name dropped every row the
+ * host actually sends, which is why the factory view showed nothing admitted.
+ * @param row - one roster row.
+ * @returns whether the row carries the factory marker.
+ */
+function isPreinstallRow(row: RosterRowLike): boolean {
+  return row.origin === 'preinstall' || row.provenance === 'preinstall'
 }
 
 /** One ledger row of the preinstall report (§1.4 wire shape). */
@@ -139,12 +158,12 @@ function badgeOf(userUninstalled: boolean, status: PreinstallAdmission): Preinst
 }
 
 /**
- * Join the two Remote surfaces by seedId. Roster rows WITHOUT
- * `provenance==='preinstall'` (operator npm installs, loader mirrors,
- * project entries) never enter the factory view; ledger rows without a
- * roster counterpart (failed installs, tombstones) do. Malformed entries
- * are coerced to 'unknown' verdicts rather than dropped, so a corrupt row
- * still surfaces for the operator to investigate.
+ * Join the two Remote surfaces by seedId. Roster rows WITHOUT the factory
+ * marker (operator npm installs, loader mirrors, project entries) never enter
+ * the factory view; ledger rows without a roster counterpart (failed
+ * installs, tombstones) do. Malformed entries are coerced to 'unknown'
+ * verdicts rather than dropped, so a corrupt row still surfaces for the
+ * operator to investigate.
  */
 export function buildPreinstallView(
   rosterRows: readonly RosterRowLike[],
@@ -152,7 +171,7 @@ export function buildPreinstallView(
 ): PreinstallView {
   const merged = new Map<string, PreinstallViewRow>()
   for (const row of rosterRows) {
-    if (row.provenance !== 'preinstall') continue
+    if (!isPreinstallRow(row)) continue
     const seedId = asString(row.pluginId)
     if (seedId === null) continue
     merged.set(seedId, {
@@ -228,5 +247,107 @@ export async function loadPreinstallView(
   } catch (cause) {
     warn(`factory-preinstall section hidden: ${cause instanceof Error ? cause.message : String(cause)}`)
     return null
+  }
+}
+
+/**
+ * The governance ids of every plugin this host has registered.
+ *
+ * The market catalog and the governance registry live in two id spaces: a
+ * catalog entry is `owner/repo` (a GitHub repository), while a registered
+ * plugin is `core/name` (a package name folded into the `core/` space). The
+ * fold is the same one the governance host applies to a package name, so the
+ * market can answer "is this catalog entry already installed?" — which it
+ * could not before, and so every factory plugin read as installable.
+ */
+export interface InstalledPlugins {
+  /** Governance ids known to be registered. */
+  readonly ids: ReadonlySet<string>
+  /** The plugin names, as the manifest spells them. */
+  readonly names: ReadonlySet<string>
+}
+
+/**
+ * Fold a package or repository name into the governance id space.
+ *
+ * The `dsh-` and `zdsh-` prefixes are the two package-name generations the
+ * governance host folds into `core/`; anything else keeps its own name.
+ * @param name - a package or repository name.
+ * @returns the governance id the name folds into.
+ */
+export function governanceIdOf(name: string): string {
+  if (name.startsWith('dsh-')) {
+    const rest = name.slice(4)
+    return rest === '' ? name : `core/${rest}`
+  }
+  if (name.startsWith('zdsh-')) {
+    const rest = name.slice(5)
+    return rest === '' ? name : `core/${rest}`
+  }
+  return name
+}
+
+/**
+ * Whether a catalog entry's plugin is already registered on this host.
+ *
+ * The two id spaces differ: a catalog entry is `owner/repo` (a GitHub
+ * repository) and a registered plugin is `core/name` (a package name folded
+ * into the `core/` space). A repository named `zdsh-autopilot` is the
+ * package `zdsh-autopilot`, which folds to `core/autopilot` — the same fold
+ * the governance host applies when it admits a local package. The package
+ * name is also matched directly, which covers an entry whose repository name
+ * and package name differ.
+ * @param entry - the catalog entry.
+ * @param installed - the registered ids and names.
+ * @returns whether the plugin is registered.
+ */
+export function isEntryInstalled(
+  entry: { id: string; repo?: string },
+  installed: InstalledPlugins,
+): boolean {
+  const repo = entry.repo ?? entry.id.split('/')[1] ?? ''
+  if (repo === '') return false
+  if (installed.ids.has(entry.id)) return true
+  if (installed.ids.has(governanceIdOf(repo))) return true
+  if (installed.ids.has(governanceIdOf(repo.toLowerCase()))) return true
+  return installed.names.has(repo)
+}
+
+/**
+ * Read the registered plugin ids and names off the governance roster.
+ *
+ * @param remote - the client context holder carrying `remote.pluginGovernance`.
+ * @param warn - the fail-safe reporter.
+ * @returns the registered ids and names, or undefined when the roster is
+ *   unreachable — a caller then renders what it knows, which is what a host
+ *   without the governance face can honestly claim.
+ */
+export async function loadInstalledPlugins(
+  remote: RemoteHolderLike | undefined,
+  warn: (message: string) => void = (message) => {
+    console.warn(`[zdsh-plugin-center] ${message}`)
+  },
+): Promise<InstalledPlugins | undefined> {
+  try {
+    const governance = remote?.pluginGovernance
+    if (governance === undefined || typeof governance.list !== 'function') {
+      warn('installed-state lookup unavailable: this host exposes no pluginGovernance list face')
+      return undefined
+    }
+    const raw = await Promise.resolve(governance.list())
+    const roster = unwrapEnvelope(raw) as { plugins?: unknown } | null
+    const plugins = Array.isArray(roster?.plugins) ? (roster.plugins as RosterRowLike[]) : []
+    const ids = new Set<string>()
+    const names = new Set<string>()
+    for (const row of plugins) {
+      const pluginId = asString(row.pluginId)
+      if (pluginId !== null) ids.add(pluginId)
+      const displayName = asString(row.displayName)
+      if (displayName !== null) names.add(displayName)
+    }
+    return { ids, names }
+  } catch (cause) {
+    warn(`installed-state lookup unavailable: ${cause instanceof Error ? cause.message : String(cause)}`)
+    return undefined
   }
 }

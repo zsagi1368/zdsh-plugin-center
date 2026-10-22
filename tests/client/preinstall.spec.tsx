@@ -8,7 +8,14 @@
 import { act } from 'react';
 import { createRoot, type Root } from 'react-dom/client';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
-import { buildPreinstallView, loadPreinstallView, type GovernanceRemoteLike } from '../../src/client/preinstall.js';
+import {
+  buildPreinstallView,
+  governanceIdOf,
+  isEntryInstalled,
+  loadInstalledPlugins,
+  loadPreinstallView,
+  type GovernanceRemoteLike,
+} from '../../src/client/preinstall.js';
 import { preinstallBadgeLabel, preinstallMountLabel, PreinstallSection } from '../../src/client/index.js';
 
 // ---------------------------------------------------------------- fixtures
@@ -16,6 +23,11 @@ import { preinstallBadgeLabel, preinstallMountLabel, PreinstallSection } from '.
 // core/webstack-verticals; TC-B2-2.1b: core/omnivision; TC-B2-2.2b:
 // core/webstack-bridge) and the governance-host PreinstallEntryResult wire
 // projection (types.ts §1.4/§9.4), mount sub-structure included.
+//
+// The factory marker is spelled `origin` on the wire — the governance host's
+// roster summary declares `readonly origin?: 'preinstall'`. A fixture that
+// used a different spelling would pass while the real host's rows are all
+// dropped, so the fixtures below carry the host's spelling.
 
 const ROSTER_PLUGINS = [
   {
@@ -24,7 +36,7 @@ const ROSTER_PLUGINS = [
     version: '0.1.0-alpha',
     status: 'active',
     source: 'native',
-    provenance: 'preinstall',
+    origin: 'preinstall',
     approvalRequired: false,
     approved: true,
     warnings: [],
@@ -35,7 +47,7 @@ const ROSTER_PLUGINS = [
     version: '0.2.0',
     status: 'active',
     source: 'native',
-    provenance: 'preinstall',
+    origin: 'preinstall',
     approvalRequired: false,
     approved: true,
     warnings: [],
@@ -46,7 +58,7 @@ const ROSTER_PLUGINS = [
     version: '0.2.0',
     status: 'disabled',
     source: 'native',
-    provenance: 'preinstall',
+    origin: 'preinstall',
     approvalRequired: false,
     approved: true,
     warnings: [],
@@ -125,6 +137,31 @@ describe('buildPreinstallView (seedId primary-key join, ADJ-1 B)', () => {
     expect(rowOf('core/webstack-verticals').mount).toBe('skipped');
     expect(rowOf('core/webstack-verticals').mountReason).toContain('enabledAtBoot=false');
     expect(rowOf('core/webstack-verticals').badge).toBe('preinstalled');
+  });
+
+  it('admits the roster rows the host actually sends', () => {
+    // The governance host's roster summary spells the factory marker
+    // `origin` (types.ts: `readonly origin?: 'preinstall'`). A view that
+    // filtered on any other spelling dropped every row the host sends, so
+    // the section rendered as empty while the factory artifacts were
+    // installed and mounted. The fixture above carries the host's spelling;
+    // this pins the admission verdict itself, not just the row set.
+    const view = buildPreinstallView(ROSTER_PLUGINS, HEALTHY_REPORT);
+    for (const row of view.rows) {
+      expect(row.admitted).toBe(true);
+    }
+  });
+
+  it('still admits a host that spells the marker the older way', () => {
+    // `provenance` was the spelling this module was first written against.
+    // A host that still sends it must keep working, so both are accepted.
+    const legacy = ROSTER_PLUGINS.map(row => {
+      const { origin, ...rest } = row as Record<string, unknown> & { origin?: unknown };
+      return { ...rest, provenance: origin };
+    });
+    const view = buildPreinstallView(legacy, HEALTHY_REPORT);
+    expect(view.rows).toHaveLength(3);
+    expect(view.rows.every(row => row.admitted)).toBe(true);
   });
 
   it('surfaces a failed ledger row that never entered the roster, with its reason', () => {
@@ -228,6 +265,51 @@ describe('loadPreinstallView fail-safe (ADJ-2 mandatory clause)', () => {
       () => undefined,
     );
     expect(view?.rows).toHaveLength(3);
+  });
+});
+
+// ------------------------------------------------- market installed state
+
+describe('market installed-state join', () => {
+  it('folds a package name into the governance id space', () => {
+    // The two name generations the governance host folds into `core/`.
+    expect(governanceIdOf('dsh-autopilot')).toBe('core/autopilot');
+    expect(governanceIdOf('zdsh-workbench')).toBe('core/workbench');
+    expect(governanceIdOf('other-plugin')).toBe('other-plugin');
+  });
+
+  it('recognises a catalog entry whose plugin this host already has', async () => {
+    const warn = vi.fn();
+    // The real factory roster: the eight seed entries the governance host
+    // registers (`core/<name>`), which is what a deployed host answers with.
+    const factoryRoster = [
+      { pluginId: 'core/autopilot', displayName: 'dsh-autopilot', version: '0.1.0', status: 'active', source: 'native', origin: 'preinstall' },
+      { pluginId: 'core/workbench', displayName: 'zdsh-workbench', version: '0.1.0-beta.1', status: 'active', source: 'native', origin: 'preinstall' },
+      { pluginId: 'core/plugin-center', displayName: 'dsh-plugin-center', version: '0.2.0', status: 'active', source: 'native', origin: 'preinstall' },
+    ];
+    const installed = await loadInstalledPlugins(
+      remoteLike(async () => ok({ plugins: factoryRoster }), async () => ok(HEALTHY_REPORT)),
+      warn,
+    );
+    expect(installed).toBeDefined();
+    // The market's `zsagi1368/zdsh-autopilot` is the `core/autopilot` the
+    // factory installed — the catalog id and the governance id are different
+    // spellings of the same plugin, and the market could not see that before.
+    expect(
+      isEntryInstalled({ id: 'zsagi1368/zdsh-autopilot', repo: 'zdsh-autopilot' }, installed!),
+    ).toBe(true);
+    // A plugin this host does NOT have stays installable.
+    expect(
+      isEntryInstalled({ id: 'sliverp/dsh-hub-plugin', repo: 'dsh-hub-plugin' }, installed!),
+    ).toBe(false);
+  });
+
+  it('reports no installed state when the roster cannot be read', async () => {
+    const warn = vi.fn();
+    // A host without the governance face cannot answer the question, so the
+    // market renders the catalog's own verdict rather than guessing.
+    expect(await loadInstalledPlugins(undefined, warn)).toBeUndefined();
+    expect(await loadInstalledPlugins({ pluginGovernance: {} }, warn)).toBeUndefined();
   });
 });
 

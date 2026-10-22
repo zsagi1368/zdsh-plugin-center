@@ -9,6 +9,8 @@
 import { useEffect, useState, type ChangeEvent, type KeyboardEvent, type ReactNode } from 'react'
 import { pluginCenterStyles } from './styles.js'
 import {
+  isEntryInstalled,
+  loadInstalledPlugins,
   loadPreinstallView,
   type PreinstallView,
   type PreinstallViewRow,
@@ -45,6 +47,8 @@ export interface ClientContext {
 
 export interface EntryView {
   id: string
+  /** The repository or package name, without its owner. */
+  repo?: string
   source: 'github' | 'npm'
   title: { zh: string; en: string }
   summary: { zh: string; en: string }
@@ -52,6 +56,14 @@ export interface EntryView {
   evidence: 'discovered' | 'installable' | 'verified' | 'recommended'
   compat: 'exact' | 'range-supported' | 'unknown'
   scriptsPolicy: 'none' | 'allowlisted'
+  /**
+   * Whether this host already has the plugin registered.
+   *
+   * Absent when the roster could not be read — the market then renders what
+   * the catalog says, which is what a host without the governance face can
+   * honestly claim. Present and false means the plugin is genuinely absent.
+   */
+  installed?: boolean
 }
 
 export interface MarketPageView {
@@ -89,6 +101,10 @@ const messages = {
     evidenceVerified: '已验证',
     evidenceInstallable: '可安装',
     evidenceDiscovered: '仅发现',
+    /** The catalog entry's plugin is already registered on this host. */
+    evidenceInstalled: '已安装',
+    /** The install action, for an entry that is already installed. */
+    reinstall: '重新安装',
     compatExact: '兼容',
     compatRange: '范围支持·待验证',
     compatUnknown: '兼容性未知',
@@ -144,6 +160,10 @@ const messages = {
     evidenceVerified: 'Verified',
     evidenceInstallable: 'Installable',
     evidenceDiscovered: 'Discovered',
+    /** The catalog entry's plugin is already registered on this host. */
+    evidenceInstalled: 'Installed',
+    /** The install action, for an entry that is already installed. */
+    reinstall: 'Reinstall',
     compatExact: 'Compatible',
     compatRange: 'Range supported · unverified',
     compatUnknown: 'Compatibility unknown',
@@ -189,6 +209,24 @@ const messages = {
       entry.source === 'github' ? messages.en.sourceGithub : messages.en.sourceNpm,
   },
 } as const
+
+/**
+ * The badge a catalog entry carries.
+ *
+ * An entry whose plugin is already registered reads as installed whatever the
+ * catalog's own evidence says: the catalog describes the REPOSITORY (it is a
+ * static, signed, remote file with no notion of what this host has), while
+ * the registry knows what is actually here. Offering "可安装" for a plugin
+ * that is installed is what made the factory plugins look uninstallable.
+ * @param entry - the catalog entry.
+ * @param locale - the display locale.
+ * @returns the badge text.
+ */
+export function entryBadge(entry: EntryView, locale: Locale): string {
+  const t = messages[locale]
+  if (entry.installed === true) return t.evidenceInstalled
+  return evidenceLabel(entry.evidence, locale)
+}
 
 export function evidenceLabel(evidence: EntryView['evidence'], locale: Locale): string {
   const t = messages[locale]
@@ -275,7 +313,7 @@ export function extractSha8(phrase: string): string {
 }
 
 /** Headline component: catalog browsing plus the one-shot confirm flow. */
-export function PluginCenterApp(props: { locale?: Locale }): ReactNode {
+export function PluginCenterApp(props: { locale?: Locale; remote?: RemoteHolderLike }): ReactNode {
   const locale: Locale = props.locale ?? 'zh'
   const t = messages[locale]
   const [data, setData] = useState<MarketPageView | null>(null)
@@ -297,7 +335,20 @@ export function PluginCenterApp(props: { locale?: Locale }): ReactNode {
     let alive = true
     apiGet<MarketPageView>(marketUrl({ page, q: submitted, category, onlyRecommended: onlyRec }))
       .then((next) => {
-        if (alive) setData(next)
+        if (!alive) return
+        // The catalog says what EXISTS; the registry says what is HERE. A
+        // catalog entry whose plugin this host already has is installed, and
+        // offering it as "可安装" is what made the factory plugins read as
+        // uninstallable. The roster is read separately so a governance face
+        // that cannot answer leaves the catalog's own verdict in place.
+        void loadInstalledPlugins(props.remote).then((installed) => {
+          if (!alive || installed === undefined) return
+          setData({
+            ...next,
+            items: next.items.map(item => ({ ...item, installed: isEntryInstalled(item, installed) })),
+          })
+        })
+        setData(next)
       })
       .catch((err: unknown) => {
         if (alive) setError(err instanceof Error ? err.message : String(err))
@@ -305,7 +356,7 @@ export function PluginCenterApp(props: { locale?: Locale }): ReactNode {
     return () => {
       alive = false
     }
-  }, [page, submitted, category, onlyRec])
+  }, [page, submitted, category, onlyRec, props.remote])
 
   // Boot guard: when the host reloads under a new boot id, refresh once.
   useEffect(() => {
@@ -660,10 +711,13 @@ function EntryCard(props: {
 }): ReactNode {
   const t = messages[props.locale]
   const item = props.entry
+  const installed = item.installed === true
   const evidenceClass =
-    item.evidence === 'recommended' || item.evidence === 'verified'
+    installed
       ? 'zdsh-pc-badge zdsh-pc-badge-good'
-      : 'zdsh-pc-badge'
+      : item.evidence === 'recommended' || item.evidence === 'verified'
+        ? 'zdsh-pc-badge zdsh-pc-badge-good'
+        : 'zdsh-pc-badge'
   const compatClass =
     item.compat === 'exact'
       ? 'zdsh-pc-badge zdsh-pc-badge-good'
@@ -673,17 +727,17 @@ function EntryCard(props: {
   return (
     <div className="zdsh-pc-card">
       <div className="zdsh-pc-card-main">
-        <div className="zdsh-pc-card-title">{item.title[props.locale]}</div>
-        <div className="zdsh-pc-card-desc">{item.summary[props.locale]}</div>
+        <div className="zdsh-pc-title">{item.title[props.locale]}</div>
+        <div className="zdsh-pc-desc">{item.summary[props.locale]}</div>
         <div className="zdsh-pc-badges">
-          <span className={evidenceClass}>{evidenceLabel(item.evidence, props.locale)}</span>
+          <span className={evidenceClass}>{entryBadge(item, props.locale)}</span>
           <span className={compatClass}>{compatLabel(item.compat, props.locale)}</span>
           <span className="zdsh-pc-badge zdsh-pc-badge-dim">{t.sourceOf(item)}</span>
         </div>
       </div>
       <div className="zdsh-pc-toolbar" style={{ flexDirection: 'column', alignItems: 'stretch', gap: '6px' }}>
         <button className="zdsh-pc-btn" disabled={item.evidence === 'discovered'} onClick={props.onInstall}>
-          {t.install}
+          {installed ? t.reinstall : t.install}
         </button>
         <button className="zdsh-pc-btn" disabled={item.evidence === 'discovered'} onClick={props.onUninstall}>
           {t.uninstall}
@@ -825,7 +879,7 @@ export function apply(ctx: ClientContext): void {
             order: PLUGIN_CENTER_SLOT_ORDER,
             label: messages.zh.brand,
           },
-          () => <PluginCenterApp locale="zh" />,
+          () => <PluginCenterApp locale="zh" remote={ctx.remote} />,
         ),
       )
       // Standalone factory-preinstall section (ADJ-1 B): hidden by its own
