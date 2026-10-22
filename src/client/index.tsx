@@ -6,7 +6,7 @@
  * Registers a settings section (order 30, after inventory/governance) and
  * talks to the plugin's own /api2 routes on the same origin.
  */
-import { useEffect, useState, type ChangeEvent, type KeyboardEvent, type ReactNode } from 'react'
+import { useCallback, useEffect, useState, type ChangeEvent, type KeyboardEvent, type ReactNode } from 'react'
 import { pluginCenterStyles } from './styles.js'
 import {
   isEntryInstalled,
@@ -143,6 +143,10 @@ const messages = {
     preinstallMountFailed: '装载失败',
     preinstallMountSkipped: '出厂未激活',
     preinstallMountUnknown: '装载状态未知',
+    preinstallEnable: '启用',
+    preinstallDisable: '停用',
+    preinstallUninstall: '卸载',
+    preinstallWorking: '处理中…',
     preinstallEmpty: '当前宿主没有出厂预装组件。',
     pageInfo: (a: number, b: number, c: number): string =>
       `第 ${String(a)} / ${String(b)} 页 · 共 ${String(c)} 条`,
@@ -202,6 +206,10 @@ const messages = {
     preinstallMountFailed: 'Mount failed',
     preinstallMountSkipped: 'Off at factory',
     preinstallMountUnknown: 'Mount state unknown',
+    preinstallEnable: 'Enable',
+    preinstallDisable: 'Disable',
+    preinstallUninstall: 'Uninstall',
+    preinstallWorking: 'Working…',
     preinstallEmpty: 'This host has no factory-preinstalled components.',
     pageInfo: (a: number, b: number, c: number): string =>
       `Page ${String(a)} / ${String(b)} · ${String(c)} entries`,
@@ -324,6 +332,8 @@ export function PluginCenterApp(props: { locale?: Locale; remote?: RemoteHolderL
   const [page, setPage] = useState(1)
   const [dialog, setDialog] = useState<DialogState | null>(null)
   const [applied, setApplied] = useState(false)
+  /** A submission is in flight; the confirm action must not send a second. */
+  const [applying, setApplying] = useState(false)
   const [error, setError] = useState('')
   const [auditTail, setAuditTail] = useState<AuditRow[]>([])
   const [guardian, setGuardian] = useState<GuardianView | null>(null)
@@ -416,6 +426,14 @@ export function PluginCenterApp(props: { locale?: Locale; remote?: RemoteHolderL
   /** Run whatever the typed code authorized, then report what happened. */
   const confirmDialog = async (): Promise<void> => {
     if (!dialog) return
+    // One submission per plan. The plan is one-shot: the second POST would
+    // arrive while the first is still applying, find the plan already
+    // confirmed, and refuse with "was already confirmed" — an error the
+    // operator could do nothing about, on an operation that had already
+    // been sent. The guard is the client's; the plan store's one-shot
+    // contract stays one-shot.
+    if (applying) return
+    setApplying(true)
     const current = dialog
     setError('')
     try {
@@ -444,6 +462,8 @@ export function PluginCenterApp(props: { locale?: Locale; remote?: RemoteHolderL
     } catch (err) {
       setError(err instanceof Error ? err.message : String(err))
       setDialog(null)
+    } finally {
+      setApplying(false)
     }
   }
 
@@ -663,7 +683,16 @@ export function PluginCenterApp(props: { locale?: Locale; remote?: RemoteHolderL
         <ConfirmDialog
           dialog={dialog}
           locale={locale}
+          applying={applying}
           onCancel={() => {
+            // A cancelled plan is released, so it stops holding the target's
+            // id. The plan id is derived from the target, so an abandoned
+            // plan is what the NEXT attempt at the same plugin collides with
+            // — and the operator was told the plan already existed with no
+            // way through.
+            if (dialog.kind === 'plan') {
+              void apiPost(`${API}/plan/release`, { planId: dialog.planId }).catch(() => undefined)
+            }
             setDialog(null)
           }}
           onConfirm={() => {
@@ -750,12 +779,14 @@ function EntryCard(props: {
 function ConfirmDialog(props: {
   dialog: DialogState
   locale: Locale
+  /** A submission is already in flight; the action must not fire again. */
+  applying?: boolean
   onCancel: () => void
   onConfirm: () => void
 }): ReactNode {
   const t = messages[props.locale]
   const [typed, setTyped] = useState('')
-  const ready = typed === props.dialog.confirmCode
+  const ready = typed === props.dialog.confirmCode && props.applying !== true
   return (
     <div className="zdsh-pc-dialog-backdrop" role="presentation">
       <div className="zdsh-pc-dialog" role="dialog" aria-modal="true">
@@ -822,6 +853,13 @@ export function PreinstallSection(props: {
   const locale: Locale = props.locale ?? 'zh'
   const t = messages[locale]
   const [view, setView] = useState<PreinstallView | null>(null)
+  // The plugin id an action is running for, so only that row shows progress.
+  const [working, setWorking] = useState<string | null>(null)
+  const [failure, setFailure] = useState<string | null>(null)
+  const reload = useCallback(async () => {
+    const next = await loadPreinstallView(props.remote)
+    setView(next)
+  }, [props.remote])
   useEffect(() => {
     let alive = true
     loadPreinstallView(props.remote)
@@ -836,6 +874,40 @@ export function PreinstallSection(props: {
       alive = false
     }
   }, [props.remote])
+  /**
+   * Run one governance action on a factory component and reload the view.
+   *
+   * The section used to be a read-only list, so an operator could see which
+   * components the factory installed but could not stop or remove one — the
+   * request was for exactly that.
+   */
+  const act = useCallback(async (
+    seedId: string,
+    action: 'enable' | 'disable' | 'uninstall',
+  ) => {
+    const governance = props.remote?.pluginGovernance
+    const call = governance?.[action]
+    if (typeof call !== 'function') {
+      setFailure('this host exposes no plugin governance action')
+      return
+    }
+    setWorking(seedId)
+    setFailure(null)
+    try {
+      const result = await call({ pluginId: seedId })
+      // The governance face answers with a result envelope; a refusal carries
+      // its own reason, which is the operator's next clue.
+      const envelope = result as { ok?: boolean; error?: { message?: unknown } } | null
+      if (envelope !== null && typeof envelope === 'object' && envelope.ok === false) {
+        setFailure(typeof envelope.error?.message === 'string' ? envelope.error.message : 'the host refused the action')
+      }
+      await reload()
+    } catch (error: unknown) {
+      setFailure(error instanceof Error ? error.message : String(error))
+    } finally {
+      setWorking(null)
+    }
+  }, [props.remote, reload])
   if (view === null) return null
   return (
     <div className="zdsh-pc">
@@ -860,9 +932,31 @@ export function PreinstallSection(props: {
             </span>
             <span>{preinstallMountLabel(row, locale)}</span>
             <span>{row.badge === 'failed' ? (row.reason ?? '') : ''}</span>
+            {/* An uninstalled component is gone: the factory will not bring
+                it back, so there is nothing left to start or stop. */}
+            {row.badge === 'userUninstalled' ? null : (
+              <span className="zdsh-pc-toolbar">
+                <button
+                  className="zdsh-pc-btn"
+                  disabled={working !== null}
+                  onClick={() => { void act(row.seedId, row.enabled ? 'disable' : 'enable') }}
+                >
+                  {row.enabled ? t.preinstallDisable : t.preinstallEnable}
+                </button>
+                <button
+                  className="zdsh-pc-btn"
+                  disabled={working !== null}
+                  onClick={() => { void act(row.seedId, 'uninstall') }}
+                >
+                  {t.preinstallUninstall}
+                </button>
+              </span>
+            )}
           </div>
         ))
       )}
+      {working !== null ? <div className="zdsh-pc-note">{t.preinstallWorking}</div> : null}
+      {failure !== null ? <div className="zdsh-pc-note">{failure}</div> : null}
     </div>
   )
 }

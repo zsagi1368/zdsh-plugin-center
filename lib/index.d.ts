@@ -226,6 +226,19 @@ declare class PlanStore {
   confirm(planId: string, phrase: string): InstallPlan;
   /** Drop expired plans; returns the number removed. */
   sweepExpired(nowMs?: number): number;
+  /**
+   * Release a staged plan the operator abandoned.
+   *
+   * Cancelling the confirmation dialog leaves the plan staged on the server:
+   * the client forgets it and the server does not hear about it. The plan id
+   * is derived from the target, so the next attempt at the same plugin
+   * computes the SAME id — and the abandoned plan is what it collides with.
+   * Releasing it is how a cancelled attempt stops blocking the next one.
+   *
+   * @param planId - the plan to release.
+   * @returns whether a staged plan was released.
+   */
+  release(planId: string): boolean;
 }
 //#endregion
 //#region src/host/lifecycle-engine.d.ts
@@ -289,6 +302,17 @@ declare class LifecycleEngine {
   }>;
   /** One-shot confirmation bound to the deterministic phrase. */
   confirmPlan(planId: string, phrase: string): CpResult<InstallPlan>;
+  /**
+   * Release a staged plan the operator abandoned.
+   *
+   * The confirmation dialog can be cancelled, and the client never told the
+   * server — so the plan stayed staged, holding the target's id. Because the
+   * id is derived from the target, every later attempt at the same plugin
+   * computed the same one and collided with it.
+   * @param planId - the plan the operator abandoned.
+   * @returns whether a staged plan was released.
+   */
+  releasePlan(planId: string): boolean;
   /**
    * Apply a confirmed plan: pre-hash the profile, back it up, run the pinned
    * official CLI, compare post-state, probe health, audit everything — with
@@ -456,6 +480,19 @@ declare class PluginCenterServices {
   confirmAndRun(planId: string, phrase: string): Promise<CpResult<{
     state: PlanState;
   }>>;
+  /**
+   * Release a staged plan the operator abandoned.
+   *
+   * Cancelling the confirmation dialog used to leave the plan staged on the
+   * server — the client forgot it and the server never heard. Because the
+   * plan id is derived from the target, the next attempt at the same plugin
+   * computed the same id and collided with the abandoned one, and the
+   * operator was told the plan already existed with no way through.
+   *
+   * @param planId - the plan the operator abandoned.
+   * @returns whether a staged plan was released.
+   */
+  releasePlan(planId: string): boolean;
   /** Last known watchdog state from disk; idle when never started. */
   guardianStatus(): {
     running: boolean;
@@ -603,6 +640,7 @@ declare const ROUTES: {
   readonly entry: string;
   readonly stagePlan: string;
   readonly applyPlan: string;
+  readonly releasePlan: string;
   readonly audit: string;
   readonly runtime: string;
   readonly guardianStatus: string;

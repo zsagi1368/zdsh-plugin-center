@@ -149,6 +149,28 @@ describe('plan store one-shot semantics', () => {
     expect(store.get(plan.planId)?.state).toBe('planned');
   });
 
+  it('releases an abandoned plan so the next attempt at the same target works', () => {
+    // Cancelling the confirmation dialog leaves the plan staged on the
+    // server. Because the id is derived from the target, the abandoned plan
+    // is exactly what the next attempt collides with.
+    const store = new PlanStore();
+    const plan = createPlan(ghEntry(), 'install', 'web', PROFILE_DIR);
+    store.add(plan);
+    expect(store.release(plan.planId)).toBe(true);
+    expect(store.get(plan.planId)).toBeNull();
+    expect(() => store.add(plan)).not.toThrow();
+  });
+
+  it('does not release a plan that already ran', () => {
+    // Releasing a finished plan would erase the record of what happened.
+    const store = new PlanStore();
+    const plan = createPlan(ghEntry(), 'install', 'web', PROFILE_DIR);
+    store.add(plan);
+    store.markState(plan.planId, 'restart-pending');
+    expect(store.release(plan.planId)).toBe(false);
+    expect(store.get(plan.planId)?.state).toBe('restart-pending');
+  });
+
   it('drops an expired plan on read, so it is never shown as confirmable', async () => {
     const store = new PlanStore(10);
     const plan = createPlan(ghEntry(), 'install', 'web', PROFILE_DIR);

@@ -229,4 +229,25 @@ export class PlanStore {
     }
     return removed
   }
+
+  /**
+   * Release a staged plan the operator abandoned.
+   *
+   * Cancelling the confirmation dialog leaves the plan staged on the server:
+   * the client forgets it and the server does not hear about it. The plan id
+   * is derived from the target, so the next attempt at the same plugin
+   * computes the SAME id — and the abandoned plan is what it collides with.
+   * Releasing it is how a cancelled attempt stops blocking the next one.
+   *
+   * @param planId - the plan to release.
+   * @returns whether a staged plan was released.
+   */
+  release(planId: string): boolean {
+    const record = this.pending.get(planId)
+    // A plan that already ran is not staged any more: releasing it would
+    // erase the record of what happened.
+    if (record === undefined || record.state !== 'planned') return false
+    this.pending.delete(planId)
+    return true
+  }
 }

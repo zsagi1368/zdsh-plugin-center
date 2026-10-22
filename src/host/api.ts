@@ -17,6 +17,7 @@ export const ROUTES = {
   entry: [API_PREFIX, 'entry'].join('/'),
   stagePlan: [API_PREFIX, 'plan/stage'].join('/'),
   applyPlan: [API_PREFIX, 'plan/apply'].join('/'),
+  releasePlan: [API_PREFIX, 'plan/release'].join('/'),
   audit: [API_PREFIX, 'audit'].join('/'),
   runtime: [API_PREFIX, 'runtime'].join('/'),
   guardianStatus: [API_PREFIX, 'guardian/status'].join('/'),
@@ -32,6 +33,7 @@ export const ROUTES = {
 const WRITE_PATHS: ReadonlySet<string> = new Set([
   ROUTES.stagePlan,
   ROUTES.applyPlan,
+  ROUTES.releasePlan,
   ROUTES.guardianToggle,
   ROUTES.backupRestore,
   ROUTES.backupRestoreApply,
@@ -235,6 +237,17 @@ export async function handleApiRequest(
       })
     }
     return fromCp(await services.confirmAndRun(body.planId, body.phrase))
+  }
+  if (matches(request, 'POST', ROUTES.releasePlan)) {
+    const body = (request.body ?? {}) as { planId?: string }
+    if (!body.planId) {
+      return json(400, {
+        error: { code: 'invalid_plan', message: 'planId is required' },
+      })
+    }
+    // Releasing is best-effort: a plan that is already gone is the state the
+    // caller wanted, so it is not an error.
+    return json(200, { released: services.releasePlan(body.planId) })
   }
   if (matches(request, 'POST', ROUTES.restartRequest)) {
     // Guardian wiring lands later in M2; stay honest until then.

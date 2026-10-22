@@ -255,6 +255,22 @@ export class PluginCenterServices {
     return this.engine.applyPlan(planId)
   }
 
+  /**
+   * Release a staged plan the operator abandoned.
+   *
+   * Cancelling the confirmation dialog used to leave the plan staged on the
+   * server — the client forgot it and the server never heard. Because the
+   * plan id is derived from the target, the next attempt at the same plugin
+   * computed the same id and collided with the abandoned one, and the
+   * operator was told the plan already existed with no way through.
+   *
+   * @param planId - the plan the operator abandoned.
+   * @returns whether a staged plan was released.
+   */
+  releasePlan(planId: string): boolean {
+    return this.engine.releasePlan(planId)
+  }
+
   // ------------------------------------------------------- operations surface
 
   /** Last known watchdog state from disk; idle when never started. */

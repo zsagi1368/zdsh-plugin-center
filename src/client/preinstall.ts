@@ -69,6 +69,12 @@ export interface ReportLike {
 export interface GovernanceRemoteLike {
   list(): Promise<unknown>
   preinstallReport(): Promise<unknown>
+  /** Start a plugin (a factory component the operator turned off). */
+  enable?(request: { pluginId: string }): Promise<unknown>
+  /** Stop a plugin without removing it. */
+  disable?(request: { pluginId: string; reason?: string }): Promise<unknown>
+  /** Remove a plugin, leaving a tombstone so the factory does not restore it. */
+  uninstall?(request: { pluginId: string }): Promise<unknown>
 }
 
 /** Holder as delivered by the cordis client context (`remote.pluginGovernance`). */
@@ -102,6 +108,12 @@ export interface PreinstallViewRow {
   /** Mount-channel dimension (§9.4); 'unknown' on rows a pass never mounted. */
   mount: PreinstallMountState
   mountReason: string | null
+  /**
+   * Whether the plugin is currently enabled ('active') or stopped
+   * ('disabled'). This is what decides whether the row offers "stop" or
+   * "start": a factory component the operator turned off is still installed.
+   */
+  enabled: boolean
   /** The three-state badge this row renders. */
   badge: PreinstallBadge
 }
@@ -183,6 +195,10 @@ export function buildPreinstallView(
       userUninstalled: false,
       mount: 'unknown',
       mountReason: null,
+      // A plugin the roster reports as anything but 'disabled' is running.
+      // The roster's own status is the authority: the ledger records what the
+      // factory pass did, and the operator's later stop shows up here.
+      enabled: asString(row.status) !== 'disabled',
       badge: 'preinstalled',
     })
   }
@@ -196,6 +212,9 @@ export function buildPreinstallView(
       const admitted = merged.get(seedId)?.admitted === true
       const displayName = merged.get(seedId)?.displayName ?? seedId
       const reason = asString(row?.reason)
+      // The roster's verdict survives the ledger's: the ledger says what the
+      // factory pass did, the roster says what is running NOW.
+      const enabled = merged.get(seedId)?.enabled ?? true
       merged.set(seedId, {
         seedId,
         displayName,
@@ -205,6 +224,7 @@ export function buildPreinstallView(
         userUninstalled,
         mount: mount.state,
         mountReason: mount.reason,
+        enabled,
         badge: badgeOf(userUninstalled, status),
       })
     }

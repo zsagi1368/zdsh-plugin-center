@@ -195,6 +195,30 @@ export class LifecycleEngine {
   }
 
   /**
+   * Release a staged plan the operator abandoned.
+   *
+   * The confirmation dialog can be cancelled, and the client never told the
+   * server — so the plan stayed staged, holding the target's id. Because the
+   * id is derived from the target, every later attempt at the same plugin
+   * computed the same one and collided with it.
+   * @param planId - the plan the operator abandoned.
+   * @returns whether a staged plan was released.
+   */
+  releasePlan(planId: string): boolean {
+    const released = this.plans.release(planId)
+    if (released) {
+      this.audit({
+        ts: this.now(),
+        action: 'plan.release',
+        planId,
+        step: 'released',
+        outcome: 'ok',
+      })
+    }
+    return released
+  }
+
+  /**
    * Apply a confirmed plan: pre-hash the profile, back it up, run the pinned
    * official CLI, compare post-state, probe health, audit everything — with
    * byte-exact rollback on any failure after the backup succeeded.
